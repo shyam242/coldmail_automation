@@ -1,13 +1,11 @@
 import os
 from dotenv import load_dotenv
 
-# --------------------------------------------------
-# LOAD ENV FIRST
-# --------------------------------------------------
+# Load env first
 load_dotenv()
 
 from fastapi import FastAPI, Request, UploadFile
-from fastapi.responses import RedirectResponse, JSONResponse
+from fastapi.responses import RedirectResponse, JSONResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -27,41 +25,22 @@ from db import (
     delete_csv,
 )
 
-# --------------------------------------------------
-# HARD FAIL IF ENV MISSING
-# --------------------------------------------------
-assert os.getenv("GOOGLE_CLIENT_ID"), "GOOGLE_CLIENT_ID not set"
-assert os.getenv("GOOGLE_CLIENT_SECRET"), "GOOGLE_CLIENT_SECRET not set"
-assert os.getenv("SESSION_SECRET"), "SESSION_SECRET not set"
+# ================== ENV CHECK ==================
+assert os.getenv("GOOGLE_CLIENT_ID")
+assert os.getenv("GOOGLE_CLIENT_SECRET")
+assert os.getenv("SESSION_SECRET")
 
-FRONTEND_URL = os.getenv(
-    "FRONTEND_URL",
-    "https://coldmail-automation.vercel.app",
-)
+FRONTEND_URL = "https://coldmail-automation.vercel.app"
 
-GOOGLE_REDIRECT_URI = os.getenv(
-    "GOOGLE_REDIRECT_URI",
-    "https://coldmail-automation-backend.onrender.com/auth/google/callback",
-)
-
-# --------------------------------------------------
-# APP INIT
-# --------------------------------------------------
 app = FastAPI()
 
-# --------------------------------------------------
-# SESSION MIDDLEWARE (MUST BE FIRST)
-# --------------------------------------------------
+# ================== SESSION ==================
 app.add_middleware(
     SessionMiddleware,
     secret_key=os.getenv("SESSION_SECRET"),
-    same_site="lax",
-    https_only=True,   # REQUIRED for Render HTTPS
 )
 
-# --------------------------------------------------
-# CORS
-# --------------------------------------------------
+# ================== CORS ==================
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[FRONTEND_URL],
@@ -70,23 +49,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ==================================================
-# AUTH
-# ==================================================
+# ================== AUTH ==================
 
 @app.get("/auth/google/login")
 async def google_login(request: Request):
     google = oauth_client()
-    return await google.authorize_redirect(
-        request,
-        GOOGLE_REDIRECT_URI
-    )
+    redirect_uri = os.getenv("GOOGLE_REDIRECT_URI")
+    return await google.authorize_redirect(request, redirect_uri)
 
 
 @app.get("/auth/google/callback")
 async def google_callback(request: Request):
     google = oauth_client()
-
     token = await google.authorize_access_token(request)
     user = token["userinfo"]
 
@@ -102,18 +76,26 @@ async def google_callback(request: Request):
         "name": user["name"],
     })
 
-    response = RedirectResponse(
-        url=f"{FRONTEND_URL}/dashboard",
-        status_code=302,
+    response = HTMLResponse(
+        f"""
+        <html>
+          <body>
+            <script>
+              window.location.href = "{FRONTEND_URL}/dashboard";
+            </script>
+          </body>
+        </html>
+        """
     )
 
+    # 🔥 CRITICAL COOKIE FIX FOR VERCEL + RENDER
     response.set_cookie(
         key="session_id",
         value=session_id,
         max_age=30 * 24 * 60 * 60,
         httponly=True,
-        secure=True,
-        samesite="lax",
+        secure=True,          # MUST
+        samesite="none",      # MUST
         path="/",
     )
 
@@ -133,7 +115,7 @@ def auth_me(request: Request):
     return {
         "authenticated": True,
         "email": user["email"],
-        "name": user["name"],
+        "name": user.get("name"),
     }
 
 
@@ -144,46 +126,31 @@ def logout(request: Request):
         delete_session(session_id)
     return {"success": True}
 
-# ==================================================
-# CSV UPLOAD
-# ==================================================
+
+# ================== CSV ==================
 
 @app.post("/upload-csv")
 async def upload_csv(file: UploadFile, request: Request):
     session_id = request.cookies.get("session_id")
-    if not session_id:
-        return JSONResponse({"error": "Unauthorized"}, status_code=401)
-
-    user = get_session(session_id)
+    user = get_session(session_id) if session_id else None
     if not user:
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
 
     content = (await file.read()).decode("utf-8")
     csv_id = save_csv(user["id"], file.filename, content)
+    return {"csv_id": csv_id, "filename": file.filename}
 
-    return {
-        "csv_id": csv_id,
-        "filename": file.filename,
-        "size": len(content),
-    }
 
-# ==================================================
-# DASHBOARD
-# ==================================================
+# ================== DASHBOARD ==================
 
 @app.get("/dashboard/stats")
 def dashboard_stats(request: Request):
     session_id = request.cookies.get("session_id")
-    if not session_id:
-        return JSONResponse({"error": "Unauthorized"}, status_code=401)
-
-    user = get_session(session_id)
+    user = get_session(session_id) if session_id else None
     if not user:
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
 
     user_id = user["id"]
-
-    csvs = get_csvs(user_id)
 
     return {
         "totalEmailsSent": count_total_emails_sent(user_id),
@@ -195,7 +162,7 @@ def dashboard_stats(request: Request):
                 "uploadedAt": c[2],
                 "rowCount": c[3],
             }
-            for c in csvs
+            for c in get_csvs(user_id)
         ],
     }
 
@@ -203,37 +170,41 @@ def dashboard_stats(request: Request):
 @app.get("/dashboard/download-csv/{csv_id}")
 def download_csv(csv_id: int, request: Request):
     session_id = request.cookies.get("session_id")
-    if not session_id:
-        return JSONResponse({"error": "Unauthorized"}, status_code=401)
-
-    user = get_session(session_id)
+    user = get_session(session_id) if session_id else None
     if not user:
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
 
     content = get_csv_content(csv_id, user["id"])
     if not content:
-        return JSONResponse({"error": "CSV not found"}, status_code=404)
+        return JSONResponse({"error": "Not found"}, status_code=404)
 
     from fastapi.responses import StreamingResponse
     from io import BytesIO
 
     return StreamingResponse(
-        BytesIO(content.encode("utf-8")),
+        BytesIO(content.encode()),
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=export.csv"},
     )
 
-# ==================================================
-# SEND EMAILS
-# ==================================================
+
+@app.delete("/dashboard/delete-csv/{csv_id}")
+def delete_csv_api(csv_id: int, request: Request):
+    session_id = request.cookies.get("session_id")
+    user = get_session(session_id) if session_id else None
+    if not user:
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+    delete_csv(csv_id, user["id"])
+    return {"success": True}
+
+
+# ================== SEND EMAILS ==================
 
 @app.post("/send-emails")
 async def send_emails(request: Request):
     session_id = request.cookies.get("session_id")
-    if not session_id:
-        return JSONResponse({"error": "Unauthorized"}, status_code=401)
-
-    user = get_session(session_id)
+    user = get_session(session_id) if session_id else None
     if not user:
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
 
@@ -243,37 +214,17 @@ async def send_emails(request: Request):
     template = body["template"]
 
     csv_content = get_csv_content(csv_id, user["id"])
-    if not csv_content:
-        return JSONResponse({"error": "CSV not found"}, status_code=404)
-
-    lines = csv_content.strip().split("\n")
+    lines = csv_content.splitlines()
     headers = lines[0].split(",")
-    rows = [r.split(",") for r in lines[1:]]
+    rows = [dict(zip(headers, r.split(","))) for r in lines[1:]]
 
-    email_idx = headers.index("email")
+    sent = 0
+    for sender in senders:
+        batch = rows[sent:sent + 50]
+        send_batch(sender, batch, template["subject"], template["body"], 1)
+        sent += len(batch)
 
-    total_sent = 0
-    for i, sender in enumerate(senders):
-        batch_rows = rows[i * 50:(i + 1) * 50]
-        row_dicts = [
-            {headers[j]: r[j] if j < len(r) else "" for j in range(len(headers))}
-            for r in batch_rows
-        ]
+    for r in rows[:sent]:
+        log_email_sent(user["id"], r.get("email", ""), template["subject"])
 
-        send_batch(
-            sender,
-            row_dicts,
-            template["subject"],
-            template["body"],
-            delay=1,
-        )
-
-        for r in batch_rows:
-            log_email_sent(user["id"], r[email_idx], template["subject"])
-
-        total_sent += len(batch_rows)
-
-    return {
-        "success": True,
-        "emailsSent": total_sent,
-    }
+    return {"success": True, "emailsSent": sent}
