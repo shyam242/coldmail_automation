@@ -1,11 +1,9 @@
-export default function Container({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+import { ReactNode } from "react";
+
+export default function Container({ children }: { children: ReactNode }) {
   return (
-    <main className="max-w-6xl mx-auto px-6">
+    <div className="max-w-7xl mx-auto px-6">
       {children}
-    </main>
+    </div>
   );
 }
