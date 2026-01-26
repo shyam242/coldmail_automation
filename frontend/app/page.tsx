@@ -2,13 +2,14 @@
 
 import { useAuth } from "@/context/AuthContext";
 
+const API = process.env.NEXT_PUBLIC_API_URL;
+
 export default function Home() {
   const { loading, authenticated } = useAuth();
 
   const handleClick = () => {
     if (!authenticated) {
-      window.location.href =
-        "http://localhost:8000/auth/google/login";
+      window.location.href = `${API}/auth/google/login`;
     } else {
       window.location.href = "/upload";
     }
@@ -33,4 +34,3 @@ export default function Home() {
       </button>
     </div>
   );
-}
