@@ -6,7 +6,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { showToast } from "@/src/components/Toast";
 
-const API = process.env.NEXT_PUBLIC_API_URL;
+const API = process.env.NEXT_PUBLIC_API_URL as string;
 
 type CSVData = {
   headers: string[];
@@ -30,79 +30,83 @@ type Template = {
 
 export default function PreviewPage() {
   const router = useRouter();
+
   const [csvData, setCSVData] = useState<CSVData | null>(null);
   const [senders, setSenders] = useState<Sender[]>([]);
   const [template, setTemplate] = useState<Template | null>(null);
+
   const [previewIndex, setPreviewIndex] = useState(0);
   const [preview, setPreview] = useState<{ subject: string; body: string } | null>(null);
+
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [progressMessage, setProgressMessage] = useState("");
 
-  /* ---------------- LOAD STORED DATA ---------------- */
+  /* ---------------- LOAD DATA ---------------- */
   useEffect(() => {
-    const csvSaved = localStorage.getItem("csvData");
-    const sendersSaved = localStorage.getItem("selectedSenders");
-    const templateSaved = localStorage.getItem("emailTemplate");
+    try {
+      const csv = localStorage.getItem("csvData");
+      const snd = localStorage.getItem("selectedSenders");
+      const tmp = localStorage.getItem("emailTemplate");
 
-    if (!csvSaved || !sendersSaved || !templateSaved) {
-      showToast("Missing required data. Please complete all steps.", "error");
+      if (!csv || !snd || !tmp) {
+        showToast("Missing data. Please complete previous steps.", "error");
+        router.push("/upload");
+        return;
+      }
+
+      setCSVData(JSON.parse(csv));
+      setSenders(JSON.parse(snd));
+      setTemplate(JSON.parse(tmp));
+    } catch {
+      showToast("Failed to load stored data", "error");
       router.push("/upload");
-      return;
     }
-
-    setCSVData(JSON.parse(csvSaved));
-    setSenders(JSON.parse(sendersSaved));
-    setTemplate(JSON.parse(templateSaved));
   }, [router]);
 
-  /* ---------------- GENERATE PREVIEW ---------------- */
+  /* ---------------- PREVIEW ---------------- */
   useEffect(() => {
     if (!csvData || !template) return;
 
     const row = csvData.rows[previewIndex];
-    const dataMap: Record<string, string> = {};
+    const map: Record<string, string> = {};
 
-    csvData.headers.forEach((header, idx) => {
-      dataMap[header] = row[idx] || "";
-    });
+    csvData.headers.forEach((h, i) => (map[h] = row[i] || ""));
 
     let subject = template.subject;
     let body = template.body;
 
-    csvData.headers.forEach((header) => {
-      const regex = new RegExp(`\\{${header}\\}`, "g");
-      subject = subject.replace(regex, dataMap[header]);
-      body = body.replace(regex, dataMap[header]);
+    csvData.headers.forEach((h) => {
+      subject = subject.replaceAll(`{${h}}`, map[h]);
+      body = body.replaceAll(`{${h}}`, map[h]);
     });
 
     setPreview({ subject, body });
   }, [csvData, template, previewIndex]);
 
-  /* ---------------- SEND EMAILS ---------------- */
+  /* ---------------- SEND ---------------- */
   const handleSendEmails = async () => {
     if (!csvData || senders.length === 0) {
-      showToast("Missing senders or CSV data", "error");
+      showToast("CSV or senders missing", "error");
       return;
     }
 
     setLoading(true);
-    setProgress(0);
+    setProgress(10);
+    setProgressMessage("Uploading CSV...");
 
     try {
-      const totalEmails = csvData.rows.length;
-
-      /* Upload CSV */
-      setProgressMessage("Uploading CSV...");
-      setProgress(10);
-
-      const csvContent = [
+      const csvText = [
         csvData.headers.join(","),
-        ...csvData.rows.map((row) => row.join(",")),
+        ...csvData.rows.map((r) => r.join(",")),
       ].join("\n");
 
       const formData = new FormData();
-      formData.append("file", new Blob([csvContent], { type: "text/csv" }), "leads.csv");
+      formData.append(
+        "file",
+        new Blob([csvText], { type: "text/csv" }),
+        "leads.csv"
+      );
 
       const uploadRes = await fetch(`${API}/upload-csv`, {
         method: "POST",
@@ -112,65 +116,69 @@ export default function PreviewPage() {
 
       if (!uploadRes.ok) throw new Error("CSV upload failed");
 
-      const { csv_id } = await uploadRes.json();
+      const uploadJson = await uploadRes.json();
+      const csvId = uploadJson?.csv_id;
 
-      /* Send emails */
+      if (!csvId) throw new Error("Invalid CSV response");
+
       setProgress(40);
       setProgressMessage("Sending emails...");
 
       const sendRes = await fetch(`${API}/send-emails`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         credentials: "include",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          csvId: csv_id,
+          csvId,
           senders,
           template,
-          totalEmails,
         }),
       });
 
       if (!sendRes.ok) throw new Error("Email sending failed");
 
       setProgress(100);
-      setProgressMessage("Emails sent successfully!");
+      setProgressMessage("Emails sent successfully");
 
-      showToast(`Successfully sent ${totalEmails} emails`, "success");
+      showToast(`Emails sent successfully`, "success");
 
       localStorage.clear();
 
       setTimeout(() => router.push("/dashboard"), 1200);
-    } catch (err: any) {
-      console.error(err);
-      showToast(err.message || "Something went wrong", "error");
+    } catch (err: unknown) {
+      console.error("Send error:", err);
+
+      let msg = "Something went wrong";
+
+      if (err instanceof Error) msg = err.message;
+      else if (typeof err === "string") msg = err;
+
+      showToast(msg, "error");
       setLoading(false);
       setProgress(0);
     }
   };
 
+  /* ---------------- UI ---------------- */
   if (!csvData || !template) {
     return (
       <AuthGuard>
         <Container>
-          <p className="py-10 text-center">Loading...</p>
+          <p className="text-center py-10">Loading…</p>
         </Container>
       </AuthGuard>
     );
   }
 
-  /* ---------------- UI ---------------- */
   return (
     <AuthGuard>
       <Container>
         <div className="py-10">
-          <h1 className="text-5xl font-bold mb-3">Preview & Send</h1>
-          <p className="text-gray-600 mb-8">
-            {csvData.rows.length} leads • {senders.length} sender(s)
-          </p>
+          <h1 className="text-5xl font-bold mb-4">Preview & Send</h1>
 
           <div className="grid lg:grid-cols-3 gap-8">
-            {/* Preview */}
-            <div className="lg:col-span-2 bg-white rounded-lg shadow p-6">
+            {/* PREVIEW */}
+            <div className="lg:col-span-2 bg-white p-6 rounded shadow">
               <select
                 value={previewIndex}
                 onChange={(e) => setPreviewIndex(Number(e.target.value))}
@@ -184,22 +192,16 @@ export default function PreviewPage() {
               </select>
 
               {preview && (
-                <div className="space-y-4">
-                  <div>
-                    <p className="text-xs font-semibold">SUBJECT</p>
-                    <p className="font-bold">{preview.subject}</p>
+                <>
+                  <p className="font-bold mb-2">{preview.subject}</p>
+                  <div className="border p-4 rounded whitespace-pre-wrap">
+                    {preview.body}
                   </div>
-                  <div>
-                    <p className="text-xs font-semibold">BODY</p>
-                    <div className="border p-4 rounded whitespace-pre-wrap">
-                      {preview.body}
-                    </div>
-                  </div>
-                </div>
+                </>
               )}
             </div>
 
-            {/* Action */}
+            {/* ACTION */}
             <div className="space-y-4">
               {!loading ? (
                 <button
@@ -209,10 +211,8 @@ export default function PreviewPage() {
                   🚀 Send Emails
                 </button>
               ) : (
-                <div className="bg-white p-6 rounded shadow">
-                  <p className="text-center font-semibold mb-2">
-                    {progressMessage}
-                  </p>
+                <div className="bg-white p-4 rounded shadow">
+                  <p className="text-center mb-2">{progressMessage}</p>
                   <div className="w-full bg-gray-200 h-3 rounded">
                     <div
                       className="bg-green-600 h-3 rounded transition-all"
