@@ -1,7 +1,7 @@
 "use client";
 
 import { useAuth } from "@/context/AuthContext";
-
+import Navbar from "@/src/components/navbar";
 const API = process.env.NEXT_PUBLIC_API_URL;
 
 export default function Home() {
@@ -34,3 +34,4 @@ export default function Home() {
       </button>
     </div>
   );
+}
