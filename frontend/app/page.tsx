@@ -1,6 +1,23 @@
 "use client";
 
+<<<<<<< HEAD
 const API = process.env.NEXT_PUBLIC_API_URL!;
+=======
+import { useAuth } from "@/context/AuthContext";
+import Navbar from "@/src/components/navbar";
+const API = process.env.NEXT_PUBLIC_API_URL;
+
+export default function Home() {
+  const { loading, authenticated } = useAuth();
+
+  const handleClick = () => {
+    if (!authenticated) {
+      window.location.href = `${API}/auth/google/login`;
+    } else {
+      window.location.href = "/upload";
+    }
+  };
+>>>>>>> 3394caa87cff32f19f8c9b138a5e64646aab4359
 
 export default function HomePage() {
   return (

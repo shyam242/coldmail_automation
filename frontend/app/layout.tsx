@@ -2,7 +2,6 @@ import "./globals.css";
 import Navbar from "@/src/components/navbar";
 import { AuthProvider } from "@/context/AuthContext";
 import { Toast } from "@/src/components/Toast";
-
 export default function RootLayout({
   children,
 }: {
