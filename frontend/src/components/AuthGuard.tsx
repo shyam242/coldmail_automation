@@ -1,29 +1,23 @@
 "use client";
 
+import { ReactNode } from "react";
 import { useAuth } from "@/context/AuthContext";
 
-export default function AuthGuard({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
-  const { loading, authenticated } = useAuth();
+export default function AuthGuard({ children }: { children: ReactNode }) {
+  const { authenticated, loading } = useAuth();
 
   if (loading) {
-    return <p className="text-center mt-20">Checking login...</p>;
+    return (
+      <div className="py-20 text-center text-gray-600">
+        Loading...
+      </div>
+    );
   }
 
   if (!authenticated) {
     return (
-      <div className="text-center mt-32 space-y-6">
-        <h2 className="text-3xl font-bold">Please log in first</h2>
-
-        <a
-          href="http://localhost:8000/auth/google/login"
-          className="inline-block bg-brand text-white px-8 py-4 rounded-xl"
-        >
-          Login with Google
-        </a>
+      <div className="py-20 text-center text-red-500 font-semibold">
+        Please login first
       </div>
     );
   }

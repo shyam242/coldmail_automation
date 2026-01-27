@@ -6,6 +6,8 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { showToast } from "@/src/components/Toast";
 
+const API = process.env.NEXT_PUBLIC_API_URL as string;
+
 type CSVData = {
   headers: string[];
   rows: string[][];
@@ -28,154 +30,141 @@ type Template = {
 
 export default function PreviewPage() {
   const router = useRouter();
+
   const [csvData, setCSVData] = useState<CSVData | null>(null);
   const [senders, setSenders] = useState<Sender[]>([]);
   const [template, setTemplate] = useState<Template | null>(null);
+
   const [previewIndex, setPreviewIndex] = useState(0);
   const [preview, setPreview] = useState<{ subject: string; body: string } | null>(null);
+
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [progressMessage, setProgressMessage] = useState("");
 
+  /* ---------------- LOAD DATA ---------------- */
   useEffect(() => {
-    // Load all data from localStorage
-    const csvSaved = localStorage.getItem("csvData");
-    const sendersSaved = localStorage.getItem("selectedSenders");
-    const templateSaved = localStorage.getItem("emailTemplate");
+    try {
+      const csv = localStorage.getItem("csvData");
+      const snd = localStorage.getItem("selectedSenders");
+      const tmp = localStorage.getItem("emailTemplate");
 
-    if (!csvSaved || !sendersSaved || !templateSaved) {
-      showToast("Missing required data. Please complete all steps.", "error");
+      if (!csv || !snd || !tmp) {
+        showToast("Missing data. Please complete previous steps.", "error");
+        router.push("/upload");
+        return;
+      }
+
+      setCSVData(JSON.parse(csv));
+      setSenders(JSON.parse(snd));
+      setTemplate(JSON.parse(tmp));
+    } catch {
+      showToast("Failed to load stored data", "error");
       router.push("/upload");
-      return;
     }
-
-    setCSVData(JSON.parse(csvSaved));
-    setSenders(JSON.parse(sendersSaved));
-    setTemplate(JSON.parse(templateSaved));
   }, [router]);
 
-  // Generate preview whenever previewIndex or template changes
+  /* ---------------- PREVIEW ---------------- */
   useEffect(() => {
     if (!csvData || !template) return;
 
     const row = csvData.rows[previewIndex];
-    const dataMap: Record<string, string> = {};
+    const map: Record<string, string> = {};
 
-    csvData.headers.forEach((header, idx) => {
-      dataMap[header] = row[idx] || "";
-    });
+    csvData.headers.forEach((h, i) => (map[h] = row[i] || ""));
 
     let subject = template.subject;
     let body = template.body;
 
-    csvData.headers.forEach((header) => {
-      const regex = new RegExp(`\\{${header}\\}`, "g");
-      subject = subject.replace(regex, dataMap[header]);
-      body = body.replace(regex, dataMap[header]);
+    csvData.headers.forEach((h) => {
+      subject = subject.replaceAll(`{${h}}`, map[h]);
+      body = body.replaceAll(`{${h}}`, map[h]);
     });
 
     setPreview({ subject, body });
   }, [csvData, template, previewIndex]);
 
+  /* ---------------- SEND ---------------- */
   const handleSendEmails = async () => {
     if (!csvData || senders.length === 0) {
-      showToast("Missing senders or CSV data", "error");
+      showToast("CSV or senders missing", "error");
       return;
     }
 
     setLoading(true);
-    setProgress(0);
+    setProgress(10);
+    setProgressMessage("Uploading CSV...");
 
     try {
-      const totalEmails = csvData.rows.length;
-      setProgressMessage(`Preparing to send ${totalEmails} emails...`);
-
-      // Save CSV first
-      setProgressMessage("Uploading CSV file...");
-      setProgress(10);
-
-      const csvContent = [
+      const csvText = [
         csvData.headers.join(","),
-        ...csvData.rows.map(row => row.join(",")),
+        ...csvData.rows.map((r) => r.join(",")),
       ].join("\n");
 
       const formData = new FormData();
-      const blob = new Blob([csvContent], { type: "text/csv" });
-      formData.append("file", blob, "leads.csv");
+      formData.append(
+        "file",
+        new Blob([csvText], { type: "text/csv" }),
+        "leads.csv"
+      );
 
-      const uploadRes = await fetch("http://localhost:8000/upload-csv", {
+      const uploadRes = await fetch(`${API}/upload-csv`, {
         method: "POST",
         body: formData,
         credentials: "include",
       });
 
-      if (!uploadRes.ok) {
-        throw new Error("Failed to upload CSV");
-      }
+      if (!uploadRes.ok) throw new Error("CSV upload failed");
 
-      const uploadData = await uploadRes.json();
-      const csvId = uploadData.csv_id;
+      const uploadJson = await uploadRes.json();
+      const csvId = uploadJson?.csv_id;
 
-      setProgress(30);
-      setProgressMessage("Saving email configuration...");
+      if (!csvId) throw new Error("Invalid CSV response");
 
-      // Send emails through backend
-      const sendRes = await fetch("http://localhost:8000/send-emails", {
+      setProgress(40);
+      setProgressMessage("Sending emails...");
+
+      const sendRes = await fetch(`${API}/send-emails`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         credentials: "include",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           csvId,
           senders,
           template,
-          totalEmails,
         }),
       });
 
-      if (!sendRes.ok) {
-        throw new Error("Failed to send emails");
-      }
+      if (!sendRes.ok) throw new Error("Email sending failed");
 
-      // Simulate progress updates
-      setProgress(50);
-      setProgressMessage("Sending emails...");
-
-      // Wait a bit to show progress
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      setProgress(75);
-      setProgressMessage("Recording sent emails...");
-
-      await new Promise(resolve => setTimeout(resolve, 1000));
       setProgress(100);
-      setProgressMessage("Done! Emails sent successfully.");
+      setProgressMessage("Emails sent successfully");
 
-      showToast(`Successfully sent ${totalEmails} emails!`, "success");
+      showToast(`Emails sent successfully`, "success");
 
-      // Clear localStorage
-      localStorage.removeItem("csvData");
-      localStorage.removeItem("selectedSenders");
-      localStorage.removeItem("emailTemplate");
-      localStorage.removeItem("senders");
+      localStorage.clear();
 
-      // Redirect to dashboard after a short delay
-      setTimeout(() => {
-        router.push("/dashboard");
-      }, 1500);
-    } catch (error) {
-      console.error("Error sending emails:", error);
-      showToast("Error sending emails: " + (error instanceof Error ? error.message : "Unknown error"), "error");
+      setTimeout(() => router.push("/dashboard"), 1200);
+    } catch (err: unknown) {
+      console.error("Send error:", err);
+
+      let msg = "Something went wrong";
+
+      if (err instanceof Error) msg = err.message;
+      else if (typeof err === "string") msg = err;
+
+      showToast(msg, "error");
       setLoading(false);
       setProgress(0);
     }
   };
 
+  /* ---------------- UI ---------------- */
   if (!csvData || !template) {
     return (
       <AuthGuard>
         <Container>
-          <div className="py-8 text-center">
-            <p className="text-gray-600">Loading...</p>
-          </div>
+          <p className="text-center py-10">Loading…</p>
         </Container>
       </AuthGuard>
     );
@@ -184,158 +173,61 @@ export default function PreviewPage() {
   return (
     <AuthGuard>
       <Container>
-        <div className="py-8">
-          <h1 className="text-5xl font-bold mb-2">Preview & Send</h1>
-          <p className="text-gray-600 text-lg mb-8">
-            Review your emails before sending. You have {csvData.rows.length} leads and{" "}
-            {senders.length} sender{senders.length !== 1 ? "s" : ""} (max{" "}
-            {senders.length * 50} emails total).
-          </p>
+        <div className="py-10">
+          <h1 className="text-5xl font-bold mb-4">Preview & Send</h1>
 
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            {/* Preview Section */}
-            <div className="lg:col-span-2 space-y-6">
-              {/* Row Selector */}
-              <div className="bg-white rounded-lg shadow-md p-6">
-                <label className="block text-sm font-semibold mb-3">
-                  Preview Email
-                </label>
-                <select
-                  value={previewIndex}
-                  onChange={(e) => setPreviewIndex(Number(e.target.value))}
-                  className="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-brand mb-4"
-                >
-                  {csvData.rows.map((_, idx) => (
-                    <option key={idx} value={idx}>
-                      Row {idx + 1} ({csvData.rows[idx][csvData.headers.indexOf("name")] || "No name"})
-                    </option>
-                  ))}
-                </select>
+          <div className="grid lg:grid-cols-3 gap-8">
+            {/* PREVIEW */}
+            <div className="lg:col-span-2 bg-white p-6 rounded shadow">
+              <select
+                value={previewIndex}
+                onChange={(e) => setPreviewIndex(Number(e.target.value))}
+                className="w-full border px-4 py-2 rounded mb-4"
+              >
+                {csvData.rows.map((_, i) => (
+                  <option key={i} value={i}>
+                    Row {i + 1}
+                  </option>
+                ))}
+              </select>
 
-                {preview && (
-                  <div className="bg-gray-50 rounded-lg p-6 border">
-                    <div className="mb-6">
-                      <p className="text-xs text-gray-600 font-semibold mb-1">TO</p>
-                      <p className="text-gray-700">
-                        {csvData.rows[previewIndex][csvData.headers.indexOf("email")]}
-                      </p>
-                    </div>
-
-                    <div className="mb-6">
-                      <p className="text-xs text-gray-600 font-semibold mb-1">SUBJECT</p>
-                      <p className="text-lg font-bold text-gray-900">
-                        {preview.subject}
-                      </p>
-                    </div>
-
-                    <div>
-                      <p className="text-xs text-gray-600 font-semibold mb-2">BODY</p>
-                      <div className="bg-white p-4 rounded border text-gray-700 whitespace-pre-wrap leading-relaxed">
-                        {preview.body}
-                      </div>
-                    </div>
+              {preview && (
+                <>
+                  <p className="font-bold mb-2">{preview.subject}</p>
+                  <div className="border p-4 rounded whitespace-pre-wrap">
+                    {preview.body}
                   </div>
-                )}
-              </div>
-
-              {/* CSV Summary */}
-              <div className="bg-white rounded-lg shadow-md p-6">
-                <h3 className="text-xl font-bold mb-4">Leads Summary</h3>
-                <div className="space-y-2">
-                  <p>
-                    <span className="font-semibold">Total Leads:</span> {csvData.rows.length}
-                  </p>
-                  <p>
-                    <span className="font-semibold">Email Column:</span>{" "}
-                    {csvData.headers.includes("email") ? "✓ Found" : "✗ Missing"}
-                  </p>
-                  <p>
-                    <span className="font-semibold">Available Columns:</span>{" "}
-                    {csvData.headers.join(", ")}
-                  </p>
-                </div>
-              </div>
+                </>
+              )}
             </div>
 
-            {/* Senders & Send Button */}
-            <div className="space-y-6">
-              {/* Senders Summary */}
-              <div className="bg-white rounded-lg shadow-md p-6">
-                <h3 className="text-xl font-bold mb-4">Senders ({senders.length})</h3>
-                <div className="space-y-3 max-h-64 overflow-y-auto">
-                  {senders.map((sender) => (
-                    <div key={sender.id} className="p-3 bg-gray-50 rounded">
-                      <p className="font-semibold text-gray-900">{sender.name}</p>
-                      <p className="text-sm text-gray-600">{sender.email}</p>
-                      <p className="text-xs text-orange-600 mt-1">Max 50 emails</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Statistics */}
-              <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg p-6 border border-blue-200">
-                <p className="text-sm text-blue-900 mb-3">
-                  <span className="font-semibold">Sending Stats:</span>
-                </p>
-                <div className="space-y-2 text-sm">
-                  <p>Leads: {csvData.rows.length}</p>
-                  <p>Senders: {senders.length}</p>
-                  <p className="font-semibold text-blue-900">
-                    Total Emails: {Math.min(csvData.rows.length, senders.length * 50)}
-                  </p>
-                </div>
-              </div>
-
-              {/* Send Button */}
+            {/* ACTION */}
+            <div className="space-y-4">
               {!loading ? (
-                <>
-                  <button
-                    onClick={handleSendEmails}
-                    disabled={loading}
-                    className="w-full bg-green-600 text-white px-6 py-4 rounded-lg font-bold text-lg hover:bg-green-700 transition disabled:opacity-50"
-                  >
-                    🚀 Start Sending Emails
-                  </button>
-
-                  {/* Back Button */}
-                  <button
-                    onClick={() => router.push("/template")}
-                    className="w-full px-6 py-3 rounded-lg font-semibold border-2 border-gray-300 hover:bg-gray-50 transition"
-                  >
-                    Back to Template
-                  </button>
-                </>
+                <button
+                  onClick={handleSendEmails}
+                  className="w-full bg-green-600 text-white py-4 rounded-lg font-bold"
+                >
+                  🚀 Send Emails
+                </button>
               ) : (
-                <div className="bg-white rounded-lg shadow-md p-6 space-y-4">
-                  <h3 className="text-lg font-bold text-center">Sending Emails...</h3>
-                  
-                  {/* Progress Bar */}
-                  <div className="space-y-2">
-                    <div className="w-full bg-gray-200 rounded-full h-4 overflow-hidden">
-                      <div
-                        className="bg-green-600 h-full transition-all duration-500 ease-out"
-                        style={{ width: `${progress}%` }}
-                      />
-                    </div>
-                    <p className="text-sm text-center text-gray-600 font-semibold">
-                      {progress}%
-                    </p>
-                  </div>
-
-                  {/* Progress Message */}
-                  <p className="text-center text-gray-700">
-                    {progressMessage}
-                  </p>
-
-                  {/* Animated dots */}
-                  <div className="flex justify-center gap-1">
-                    <div className="w-2 h-2 bg-green-600 rounded-full animate-bounce" />
-                    <div className="w-2 h-2 bg-green-600 rounded-full animate-bounce" style={{ animationDelay: "0.2s" }} />
-                    <div className="w-2 h-2 bg-green-600 rounded-full animate-bounce" style={{ animationDelay: "0.4s" }} />
+                <div className="bg-white p-4 rounded shadow">
+                  <p className="text-center mb-2">{progressMessage}</p>
+                  <div className="w-full bg-gray-200 h-3 rounded">
+                    <div
+                      className="bg-green-600 h-3 rounded transition-all"
+                      style={{ width: `${progress}%` }}
+                    />
                   </div>
                 </div>
               )}
+
+              <button
+                onClick={() => router.push("/template")}
+                className="w-full border py-3 rounded"
+              >
+                Back
+              </button>
             </div>
           </div>
         </div>
