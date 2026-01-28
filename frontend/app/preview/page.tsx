@@ -46,17 +46,17 @@ export default function PreviewPage() {
   useEffect(() => {
     try {
       const csv = localStorage.getItem("csvData");
-      const snd = localStorage.getItem("selectedSenders");
+      const senderIds = localStorage.getItem("selectedSenders");
       const tmp = localStorage.getItem("emailTemplate");
 
-      if (!csv || !snd || !tmp) {
+      if (!csv || !senderIds || !tmp) {
         showToast("Missing data. Please complete previous steps.", "error");
         router.push("/upload");
         return;
       }
 
       setCSVData(JSON.parse(csv));
-      setSenders(JSON.parse(snd));
+      setSenders(JSON.parse(senderIds)); // This will be an array of IDs
       setTemplate(JSON.parse(tmp));
     } catch {
       showToast("Failed to load stored data", "error");
@@ -87,7 +87,7 @@ export default function PreviewPage() {
   /* ---------------- SEND ---------------- */
   const handleSendEmails = async () => {
     if (!csvData || senders.length === 0) {
-      showToast("CSV or senders missing", "error");
+      showToast("CSV or sender accounts missing", "error");
       return;
     }
 
@@ -122,25 +122,30 @@ export default function PreviewPage() {
       if (!csvId) throw new Error("Invalid CSV response");
 
       setProgress(40);
-      setProgressMessage("Sending emails...");
+      setProgressMessage("Sending emails via Gmail API...");
 
+      // Send emails using Gmail API with selected sender account IDs
       const sendRes = await fetch(`${API}/send-emails`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           csvId,
-          senders,
+          senderAccountIds: senders, // Array of Gmail account IDs
           template,
         }),
       });
 
-      if (!sendRes.ok) throw new Error("Email sending failed");
+      if (!sendRes.ok) {
+        const error = await sendRes.json();
+        throw new Error(error.error || "Email sending failed");
+      }
 
+      const sendJson = await sendRes.json();
       setProgress(100);
-      setProgressMessage("Emails sent successfully");
+      setProgressMessage(`${sendJson.emailsSent} emails sent successfully!`);
 
-      showToast(`Emails sent successfully`, "success");
+      showToast(`Emails sent successfully (${sendJson.emailsSent} emails)`, "success");
 
       localStorage.clear();
 
