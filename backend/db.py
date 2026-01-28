@@ -27,6 +27,17 @@ CREATE TABLE IF NOT EXISTS users (
 )
 """)
 
+# Add missing columns to users table if they don't exist
+try:
+    cur.execute("ALTER TABLE users ADD COLUMN gmail_token TEXT")
+except Exception:
+    pass  # Column already exists
+
+try:
+    cur.execute("ALTER TABLE users ADD COLUMN gmail_refresh_token TEXT")
+except Exception:
+    pass  # Column already exists
+
 cur.execute("""
 CREATE TABLE IF NOT EXISTS sessions (
     session_id TEXT PRIMARY KEY,
