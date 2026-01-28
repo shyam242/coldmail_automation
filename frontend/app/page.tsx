@@ -26,14 +26,6 @@ export default function HomePage() {
           Cold Email Automation <br />
           <span className="text-brand">That Actually Gets Replies</span>
         </h1>
-
-        {/* SUBTEXT */}
-        <p className="text-lg md:text-xl text-gray-600 max-w-3xl mx-auto mb-10">
-          Upload leads via CSV, connect up to 3 Gmail accounts, and send
-          personalized cold emails securely using Google OAuth — no app
-          passwords, no SMTP headaches.
-        </p>
-
         {/* CTA */}
         <div className="flex justify-center mb-14">
           <button
