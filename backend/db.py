@@ -11,7 +11,9 @@ CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     google_id TEXT UNIQUE,
     email TEXT,
-    name TEXT
+    name TEXT,
+    gmail_token TEXT,
+    gmail_refresh_token TEXT
 )
 """)
 
@@ -26,14 +28,16 @@ CREATE TABLE IF NOT EXISTS sessions (
 """)
 
 cur.execute("""
-CREATE TABLE IF NOT EXISTS senders (
+CREATE TABLE IF NOT EXISTS gmail_accounts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER,
-    name TEXT,
+    gmail_id TEXT UNIQUE,
     email TEXT,
-    smtp TEXT,
-    port TEXT,
-    password TEXT
+    name TEXT,
+    access_token TEXT,
+    refresh_token TEXT,
+    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(user_id) REFERENCES users(id)
 )
 """)
 
@@ -72,24 +76,6 @@ def get_or_create_user(google_id, email, name):
     )
     conn.commit()
     return cur.lastrowid
-
-def save_sender(user_id, sender):
-    cur.execute("""
-        INSERT INTO senders (user_id, name, email, smtp, port, password)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (
-        user_id,
-        sender["name"],
-        sender["email"],
-        sender["smtp"],
-        sender["port"],
-        sender["password"],
-    ))
-    conn.commit()
-
-def get_senders(user_id):
-    cur.execute("SELECT * FROM senders WHERE user_id=?", (user_id,))
-    return cur.fetchall()
 
 def save_csv(user_id, filename, content):
     """Save CSV file and return the CSV ID"""
@@ -170,3 +156,69 @@ def log_email_sent(user_id, recipient_email, subject):
         VALUES (?, ?, ?)
     """, (user_id, recipient_email, subject))
     conn.commit()
+# ===== GMAIL ACCOUNT MANAGEMENT =====
+
+def add_gmail_account(user_id, gmail_id, email, name, access_token, refresh_token):
+    """Add a new Gmail account for the user"""
+    cur.execute("""
+        INSERT INTO gmail_accounts (user_id, gmail_id, email, name, access_token, refresh_token)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (user_id, gmail_id, email, name, access_token, refresh_token))
+    conn.commit()
+    return cur.lastrowid
+
+def get_gmail_accounts(user_id):
+    """Get all Gmail accounts for a user"""
+    cur.execute("""
+        SELECT id, gmail_id, email, name, access_token, refresh_token
+        FROM gmail_accounts WHERE user_id=? ORDER BY added_at DESC
+    """, (user_id,))
+    return cur.fetchall()
+
+def get_gmail_account(account_id, user_id):
+    """Get a specific Gmail account"""
+    cur.execute("""
+        SELECT id, gmail_id, email, name, access_token, refresh_token
+        FROM gmail_accounts WHERE id=? AND user_id=?
+    """, (account_id, user_id))
+    return cur.fetchone()
+
+def count_gmail_accounts(user_id):
+    """Count total Gmail accounts for a user"""
+    cur.execute("SELECT COUNT(*) FROM gmail_accounts WHERE user_id=?", (user_id,))
+    return cur.fetchone()[0]
+
+def update_gmail_tokens(account_id, access_token, refresh_token=None):
+    """Update tokens for a Gmail account"""
+    if refresh_token:
+        cur.execute("""
+            UPDATE gmail_accounts SET access_token=?, refresh_token=?
+            WHERE id=?
+        """, (access_token, refresh_token, account_id))
+    else:
+        cur.execute("""
+            UPDATE gmail_accounts SET access_token=?
+            WHERE id=?
+        """, (access_token, account_id))
+    conn.commit()
+
+def delete_gmail_account(account_id, user_id):
+    """Delete a Gmail account"""
+    cur.execute("DELETE FROM gmail_accounts WHERE id=? AND user_id=?", (account_id, user_id))
+    conn.commit()
+
+def update_user_gmail_tokens(user_id, access_token, refresh_token):
+    """Update tokens for the main user account"""
+    cur.execute("""
+        UPDATE users SET gmail_token=?, gmail_refresh_token=?
+        WHERE id=?
+    """, (access_token, refresh_token, user_id))
+    conn.commit()
+
+def get_user_gmail_tokens(user_id):
+    """Get Gmail tokens for the main user account"""
+    cur.execute("""
+        SELECT gmail_token, gmail_refresh_token FROM users WHERE id=?
+    """, (user_id,))
+    row = cur.fetchone()
+    return {"access_token": row[0], "refresh_token": row[1]} if row else None
