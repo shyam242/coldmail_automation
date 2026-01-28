@@ -2,6 +2,7 @@ import sqlite3
 import json
 import uuid
 from datetime import datetime, timedelta
+from crypto_utils import encrypt_token, decrypt_token
 
 conn = sqlite3.connect("database.db", check_same_thread=False)
 cur = conn.cursor()
@@ -159,29 +160,54 @@ def log_email_sent(user_id, recipient_email, subject):
 # ===== GMAIL ACCOUNT MANAGEMENT =====
 
 def add_gmail_account(user_id, gmail_id, email, name, access_token, refresh_token):
-    """Add a new Gmail account for the user"""
+    """Add a new Gmail account for the user (encrypted)"""
+    # Encrypt tokens before storing
+    encrypted_access = encrypt_token(access_token)
+    encrypted_refresh = encrypt_token(refresh_token) if refresh_token else None
+    
     cur.execute("""
         INSERT INTO gmail_accounts (user_id, gmail_id, email, name, access_token, refresh_token)
         VALUES (?, ?, ?, ?, ?, ?)
-    """, (user_id, gmail_id, email, name, access_token, refresh_token))
+    """, (user_id, gmail_id, email, name, encrypted_access, encrypted_refresh))
     conn.commit()
     return cur.lastrowid
 
 def get_gmail_accounts(user_id):
-    """Get all Gmail accounts for a user"""
+    """Get all Gmail accounts for a user (decrypted)"""
     cur.execute("""
         SELECT id, gmail_id, email, name, access_token, refresh_token
         FROM gmail_accounts WHERE user_id=? ORDER BY added_at DESC
     """, (user_id,))
-    return cur.fetchall()
+    rows = cur.fetchall()
+    
+    # Decrypt tokens
+    decrypted_rows = []
+    for row in rows:
+        id, gmail_id, email, name, access_token, refresh_token = row
+        decrypted_rows.append((
+            id, gmail_id, email, name,
+            decrypt_token(access_token),
+            decrypt_token(refresh_token) if refresh_token else None
+        ))
+    return decrypted_rows
 
 def get_gmail_account(account_id, user_id):
-    """Get a specific Gmail account"""
+    """Get a specific Gmail account (decrypted)"""
     cur.execute("""
         SELECT id, gmail_id, email, name, access_token, refresh_token
         FROM gmail_accounts WHERE id=? AND user_id=?
     """, (account_id, user_id))
-    return cur.fetchone()
+    row = cur.fetchone()
+    if not row:
+        return None
+    
+    # Decrypt tokens
+    id, gmail_id, email, name, access_token, refresh_token = row
+    return (
+        id, gmail_id, email, name,
+        decrypt_token(access_token),
+        decrypt_token(refresh_token) if refresh_token else None
+    )
 
 def count_gmail_accounts(user_id):
     """Count total Gmail accounts for a user"""
@@ -189,17 +215,21 @@ def count_gmail_accounts(user_id):
     return cur.fetchone()[0]
 
 def update_gmail_tokens(account_id, access_token, refresh_token=None):
-    """Update tokens for a Gmail account"""
+    """Update tokens for a Gmail account (encrypted)"""
+    # Encrypt tokens before storing
+    encrypted_access = encrypt_token(access_token)
+    encrypted_refresh = encrypt_token(refresh_token) if refresh_token else None
+    
     if refresh_token:
         cur.execute("""
             UPDATE gmail_accounts SET access_token=?, refresh_token=?
             WHERE id=?
-        """, (access_token, refresh_token, account_id))
+        """, (encrypted_access, encrypted_refresh, account_id))
     else:
         cur.execute("""
             UPDATE gmail_accounts SET access_token=?
             WHERE id=?
-        """, (access_token, account_id))
+        """, (encrypted_access, account_id))
     conn.commit()
 
 def delete_gmail_account(account_id, user_id):
@@ -208,17 +238,26 @@ def delete_gmail_account(account_id, user_id):
     conn.commit()
 
 def update_user_gmail_tokens(user_id, access_token, refresh_token):
-    """Update tokens for the main user account"""
+    """Update tokens for the main user account (encrypted)"""
+    # Encrypt tokens before storing
+    encrypted_access = encrypt_token(access_token)
+    encrypted_refresh = encrypt_token(refresh_token) if refresh_token else None
+    
     cur.execute("""
         UPDATE users SET gmail_token=?, gmail_refresh_token=?
         WHERE id=?
-    """, (access_token, refresh_token, user_id))
+    """, (encrypted_access, encrypted_refresh, user_id))
     conn.commit()
 
 def get_user_gmail_tokens(user_id):
-    """Get Gmail tokens for the main user account"""
+    """Get Gmail tokens for the main user account (decrypted)"""
     cur.execute("""
         SELECT gmail_token, gmail_refresh_token FROM users WHERE id=?
     """, (user_id,))
     row = cur.fetchone()
-    return {"access_token": row[0], "refresh_token": row[1]} if row else None
+    if row:
+        return {
+            "access_token": decrypt_token(row[0]),
+            "refresh_token": decrypt_token(row[1]) if row[1] else None
+        }
+    return None
