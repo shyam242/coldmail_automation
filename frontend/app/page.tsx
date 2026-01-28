@@ -1,30 +1,26 @@
 "use client";
 
-<<<<<<< HEAD
-const API = process.env.NEXT_PUBLIC_API_URL!;
-=======
 import { useAuth } from "@/context/AuthContext";
-import Navbar from "@/src/components/navbar";
+
 const API = process.env.NEXT_PUBLIC_API_URL;
-
-export default function Home() {
-  const { loading, authenticated } = useAuth();
-
-  const handleClick = () => {
-    if (!authenticated) {
-      window.location.href = `${API}/auth/google/login`;
-    } else {
-      window.location.href = "/upload";
-    }
-  };
->>>>>>> 3394caa87cff32f19f8c9b138a5e64646aab4359
+if (!API) {
+  throw new Error("NEXT_PUBLIC_API_URL is not defined");
+}
 
 export default function HomePage() {
+  const { loading, authenticated } = useAuth();
+
+  const handleGetStarted = () => {
+    if (authenticated) {
+      window.location.href = "/upload";
+    } else {
+      window.location.href = `${API}/auth/google/login`;
+    }
+  };
+
   return (
     <main className="min-h-screen bg-[#fffaf5] flex items-center justify-center">
       <div className="max-w-5xl w-full px-6 py-16 text-center">
-        {/* BRAND */}
-
         {/* HERO HEADING */}
         <h1 className="text-5xl md:text-6xl font-extrabold text-gray-900 leading-tight mb-6">
           Cold Email Automation <br />
@@ -41,19 +37,20 @@ export default function HomePage() {
         {/* CTA */}
         <div className="flex justify-center mb-14">
           <button
-            onClick={() => {
-              window.location.href = `${API}/auth/google/login`;
-            }}
-            className="bg-brand hover:bg-orange-600 transition-all text-white px-10 py-4 rounded-xl text-lg font-semibold shadow-xl"
+            onClick={handleGetStarted}
+            disabled={loading}
+            className="bg-brand hover:bg-orange-600 transition-all text-white px-10 py-4 rounded-xl text-lg font-semibold shadow-xl disabled:opacity-50"
           >
-            🚀 Get Started with Google
+            🚀 {authenticated ? "Go to Dashboard" : "Get Started with Google"}
           </button>
         </div>
 
         {/* FEATURES */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8 text-left">
           <div className="bg-white rounded-xl shadow p-6">
-            <h3 className="text-xl font-bold mb-2">📂 CSV-Based Campaigns</h3>
+            <h3 className="text-xl font-bold mb-2">
+              📂 CSV-Based Campaigns
+            </h3>
             <p className="text-gray-600">
               Upload a CSV of leads and automatically personalize every email
               using dynamic fields.
@@ -61,7 +58,9 @@ export default function HomePage() {
           </div>
 
           <div className="bg-white rounded-xl shadow p-6">
-            <h3 className="text-xl font-bold mb-2">🔐 Gmail OAuth Only</h3>
+            <h3 className="text-xl font-bold mb-2">
+              🔐 Gmail OAuth Only
+            </h3>
             <p className="text-gray-600">
               Connect Gmail securely with Google OAuth. No app passwords. No
               risky SMTP logins.
@@ -69,7 +68,9 @@ export default function HomePage() {
           </div>
 
           <div className="bg-white rounded-xl shadow p-6">
-            <h3 className="text-xl font-bold mb-2">⚡ Smart Sender Rotation</h3>
+            <h3 className="text-xl font-bold mb-2">
+              ⚡ Smart Sender Rotation
+            </h3>
             <p className="text-gray-600">
               Use up to 3 Gmail accounts and automatically send 50 emails per
               account to stay safe.
