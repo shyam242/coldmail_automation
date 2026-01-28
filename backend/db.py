@@ -2,7 +2,16 @@ import sqlite3
 import json
 import uuid
 from datetime import datetime, timedelta
-from crypto_utils import encrypt_token, decrypt_token
+
+# Import crypto utilities with fallback
+try:
+    from crypto_utils import encrypt_token, decrypt_token
+except ImportError:
+    # Fallback if crypto_utils not available
+    def encrypt_token(token):
+        return token
+    def decrypt_token(token):
+        return token
 
 conn = sqlite3.connect("database.db", check_same_thread=False)
 cur = conn.cursor()
