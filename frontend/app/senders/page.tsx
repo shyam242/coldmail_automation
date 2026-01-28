@@ -6,239 +6,211 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { showToast } from "@/src/components/Toast";
 
-type Sender = {
-  id: string;
-  name: string;
+type GmailAccount = {
+  id: number;
   email: string;
-  smtp: string;
-  port: string;
-  password: string;
-  selected: boolean;
+  name: string;
+  selected?: boolean;
 };
+
+const API = process.env.NEXT_PUBLIC_API_URL;
+if (!API) {
+  throw new Error("NEXT_PUBLIC_API_URL is not defined");
+}
 
 export default function SendersPage() {
   const router = useRouter();
-  const [senders, setSenders] = useState<Sender[]>([]);
-  const [showPassword, setShowPassword] = useState(false);
-  const [formData, setFormData] = useState({
-    name: "",
-    email: "",
-    smtp: "smtp.gmail.com",
-    port: "587",
-    password: "",
-  });
+  const [accounts, setAccounts] = useState<GmailAccount[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const saved = localStorage.getItem("senders");
-    if (saved) {
-      setSenders(JSON.parse(saved));
-    }
-    setLoading(false);
+    fetchAccounts();
   }, []);
 
-  const handleAddSender = () => {
-    if (!formData.name || !formData.email || !formData.smtp || !formData.password) {
-      showToast("Please fill all sender details", "error");
+  const fetchAccounts = async () => {
+    try {
+      const response = await fetch(`${API}/gmail/accounts`, {
+        credentials: "include",
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          router.push("/");
+          return;
+        }
+        throw new Error("Failed to fetch accounts");
+      }
+
+      const data = await response.json();
+      setAccounts(
+        data.accounts.map((acc: GmailAccount) => ({
+          ...acc,
+          selected: false,
+        }))
+      );
+    } catch (error) {
+      console.error("Error fetching accounts:", error);
+      showToast("Failed to load Gmail accounts", "error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleConnectGmail = async () => {
+    if (accounts.length >= 3) {
+      showToast("Maximum 3 Gmail accounts allowed", "error");
       return;
     }
 
-    const newSender: Sender = {
-      id: Date.now().toString(),
-      ...formData,
-      selected: false,
-    };
-
-    const updated = [...senders, newSender];
-    setSenders(updated);
-    localStorage.setItem("senders", JSON.stringify(updated));
-
-    setFormData({
-      name: "",
-      email: "",
-      smtp: "",
-      port: "587",
-      password: "",
-    });
-
-    showToast(`Sender '${formData.name}' added successfully!`, "success");
+    try {
+      // Open Google OAuth in new window to maintain session
+      window.location.href = `${API}/gmail/connect`;
+    } catch (error) {
+      console.error("Error connecting Gmail:", error);
+      showToast("Failed to connect Gmail account", "error");
+    }
   };
 
-  const handleToggleSender = (id: string) => {
-    const updated = senders.map(sender =>
-      sender.id === id ? { ...sender, selected: !sender.selected } : sender
+  const handleToggleSelect = (id: number) => {
+    setAccounts((prev) =>
+      prev.map((acc) =>
+        acc.id === id ? { ...acc, selected: !acc.selected } : acc
+      )
     );
-    setSenders(updated);
-    localStorage.setItem("senders", JSON.stringify(updated));
   };
 
-  const handleDeleteSender = (id: string) => {
-    const updated = senders.filter(sender => sender.id !== id);
-    setSenders(updated);
-    localStorage.setItem("senders", JSON.stringify(updated));
-    showToast("Sender deleted successfully!", "success");
+  const handleDeleteAccount = async (id: number) => {
+    if (!confirm("Are you sure you want to remove this Gmail account?")) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API}/gmail/accounts/${id}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to delete account");
+      }
+
+      setAccounts((prev) => prev.filter((acc) => acc.id !== id));
+      showToast("Gmail account removed", "success");
+    } catch (error) {
+      console.error("Error deleting account:", error);
+      showToast("Failed to remove Gmail account", "error");
+    }
   };
 
   const handleContinue = () => {
-    const selectedSenders = senders.filter(s => s.selected);
-    if (selectedSenders.length === 0) {
-      showToast("Please select at least one sender", "error");
+    const selected = accounts.filter((acc) => acc.selected);
+
+    if (selected.length === 0) {
+      showToast("Please select at least one Gmail account", "error");
       return;
     }
 
-    localStorage.setItem("selectedSenders", JSON.stringify(selectedSenders));
-    showToast("Senders selected! Moving to email template...", "success");
+    // Store selected accounts for the template page
+    localStorage.setItem(
+      "selectedSenders",
+      JSON.stringify(selected.map((acc) => acc.id))
+    );
+
     router.push("/template");
   };
+
+  if (loading) {
+    return (
+      <AuthGuard>
+        <Container>
+          <div className="flex items-center justify-center min-h-screen">
+            <div className="text-lg text-gray-500">Loading...</div>
+          </div>
+        </Container>
+      </AuthGuard>
+    );
+  }
 
   return (
     <AuthGuard>
       <Container>
-        <div className="py-8">
-          <h1 className="text-5xl font-bold mb-2">Sender Setup</h1>
+        <div className="max-w-3xl mx-auto py-12">
+          <h1 className="text-4xl font-bold mb-2">Gmail Accounts</h1>
           <p className="text-gray-600 text-lg mb-8">
-            Add your SMTP email accounts. Each sender can send maximum 50 emails.
+            Connect up to 3 Gmail accounts. Each account can send maximum 50 emails.
           </p>
 
-          {/* Add New Sender Form */}
-          <div className="bg-white rounded-lg shadow-md p-8 mb-8">
-            <h2 className="text-2xl font-bold mb-6">Add New Sender</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-              <input
-                type="text"
-                placeholder="Sender Name"
-                value={formData.name}
-                onChange={(e) =>
-                  setFormData({ ...formData, name: e.target.value })
-                }
-                className="px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-brand"
-              />
-              <input
-                type="email"
-                placeholder="Email Address"
-                value={formData.email}
-                onChange={(e) =>
-                  setFormData({ ...formData, email: e.target.value })
-                }
-                className="px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-brand"
-              />
-              <input
-                type="text"
-                value={formData.smtp}
-                onChange={(e) =>
-                  setFormData({ ...formData, smtp: e.target.value })
-                }
-                className="px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-brand"
-              />
-              <div className="flex gap-4">
-                <input
-                  type="number"
-                  placeholder="Port"
-                  value={formData.port}
-                  onChange={(e) =>
-                    setFormData({ ...formData, port: e.target.value })
-                  }
-                  className="flex-1 px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-brand"
-                />
-              </div>
-              <div className="md:col-span-2 relative flex items-center">
-                <input
-                  type={showPassword ? "text" : "password"}
-                  placeholder="Password or App Password"
-                  value={formData.password}
-                  onChange={(e) =>
-                    setFormData({ ...formData, password: e.target.value })
-                  }
-                  className="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-brand pr-10"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 text-gray-500 hover:text-gray-700 transition"
-                  title={showPassword ? "Hide password" : "Show password"}
-                >
-                  {showPassword ? "👁️" : "👁️‍🗨️"}
-                </button>
-              </div>
-            </div>
-            <button
-              onClick={handleAddSender}
-              className="w-full bg-brand text-white px-6 py-3 rounded-lg font-semibold hover:bg-orange-600 transition"
-            >
-              Add Sender
-            </button>
-          </div>
+          {/* Connected Accounts */}
+          <div className="bg-white rounded-lg shadow-md p-6 mb-8">
+            <h2 className="text-xl font-semibold mb-6">Connected Accounts</h2>
 
-          {/* Senders List */}
-          {senders.length > 0 && (
-            <div className="bg-white rounded-lg shadow-md overflow-hidden mb-8">
-              <div className="bg-gray-50 px-6 py-4 border-b">
-                <h2 className="text-2xl font-bold">Your Senders</h2>
-              </div>
-
-              <div className="space-y-4 p-6">
-                {senders.map((sender) => (
+            {accounts.length === 0 ? (
+              <p className="text-gray-500 text-center py-8">
+                No Gmail accounts connected yet. Connect your first account to get started.
+              </p>
+            ) : (
+              <div className="space-y-4">
+                {accounts.map((account) => (
                   <div
-                    key={sender.id}
-                    className="border rounded-lg p-6 flex items-start gap-4 hover:bg-gray-50 transition"
+                    key={account.id}
+                    className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border border-gray-200"
                   >
-                    <input
-                      type="checkbox"
-                      checked={sender.selected}
-                      onChange={() => handleToggleSender(sender.id)}
-                      className="w-5 h-5 mt-1 accent-brand cursor-pointer"
-                    />
-                    <div className="flex-1">
-                      <h3 className="text-xl font-bold">{sender.name}</h3>
-                      <p className="text-gray-600">{sender.email}</p>
-                      <p className="text-sm text-gray-500 mt-2">
-                        {sender.smtp}:{sender.port}
-                      </p>
-                      <p className="text-xs text-orange-600 mt-2">
-                        Max 50 emails per sending
-                      </p>
+                    <div className="flex items-center flex-1">
+                      <input
+                        type="checkbox"
+                        checked={account.selected || false}
+                        onChange={() => handleToggleSelect(account.id)}
+                        className="w-5 h-5 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
+                      />
+                      <div className="ml-4 flex-1">
+                        <p className="font-medium text-gray-900">{account.email}</p>
+                        <p className="text-sm text-gray-500">{account.name}</p>
+                      </div>
                     </div>
                     <button
-                      onClick={() => handleDeleteSender(sender.id)}
-                      className="text-red-500 hover:text-red-700 font-semibold px-4 py-2 rounded hover:bg-red-50 transition"
+                      onClick={() => handleDeleteAccount(account.id)}
+                      className="ml-4 px-3 py-1 text-sm text-red-600 hover:bg-red-50 rounded"
                     >
-                      Delete
+                      Remove
                     </button>
                   </div>
                 ))}
               </div>
+            )}
+          </div>
 
-              {senders.length > 0 && (
-                <div className="bg-gray-50 px-6 py-4 border-t">
-                  <p className="text-sm text-gray-600 mb-4">
-                    {senders.filter(s => s.selected).length} of {senders.length} senders selected
-                  </p>
-                  <div className="flex gap-4">
-                    <button
-                      onClick={() => router.push("/upload")}
-                      className="px-8 py-3 rounded-lg font-semibold border-2 border-gray-300 hover:bg-gray-50 transition"
-                    >
-                      Back
-                    </button>
-                    <button
-                      onClick={handleContinue}
-                      disabled={senders.filter(s => s.selected).length === 0}
-                      className="flex-1 bg-brand text-white px-8 py-3 rounded-lg font-semibold hover:bg-orange-600 transition disabled:opacity-50"
-                    >
-                      Continue to Email Template →
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
+          {/* Add Account Button */}
+          {accounts.length < 3 && (
+            <button
+              onClick={handleConnectGmail}
+              className="w-full mb-8 bg-blue-600 hover:bg-blue-700 transition-all text-white px-6 py-3 rounded-lg font-semibold"
+            >
+              ➕ Connect New Gmail Account
+            </button>
           )}
 
-          {senders.length === 0 && !loading && (
-            <div className="bg-gray-50 rounded-lg p-8 text-center">
-              <p className="text-gray-600 mb-4">No senders added yet</p>
-              <p className="text-sm text-gray-500">
-                Add at least one sender to continue
-              </p>
+          {accounts.length >= 3 && (
+            <p className="text-center text-gray-500 mb-8 text-sm">
+              Maximum 3 Gmail accounts reached
+            </p>
+          )}
+
+          {/* Continue Button */}
+          {accounts.length > 0 && (
+            <div className="flex gap-4">
+              <button
+                onClick={() => router.push("/upload")}
+                className="flex-1 px-6 py-3 border border-gray-300 rounded-lg text-gray-700 font-semibold hover:bg-gray-50"
+              >
+                Back
+              </button>
+              <button
+                onClick={handleContinue}
+                disabled={accounts.filter((acc) => acc.selected).length === 0}
+                className="flex-1 px-6 py-3 bg-green-600 hover:bg-green-700 transition-all text-white rounded-lg font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Continue to Template →
+              </button>
             </div>
           )}
         </div>
