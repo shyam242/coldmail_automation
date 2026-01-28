@@ -294,7 +294,7 @@ def get_accounts(request: Request):
     }
 
 
-@app.post("/gmail/connect")
+@app.get("/gmail/connect")
 async def connect_gmail_account(request: Request):
     """Initiate OAuth flow for adding a new Gmail account"""
     session_id = request.cookies.get("session_id")
