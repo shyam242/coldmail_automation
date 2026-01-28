@@ -183,7 +183,7 @@ export default function SendersPage() {
           {accounts.length < 3 && (
             <button
               onClick={handleConnectGmail}
-              className="bg-brand hover:bg-orange-600 transition-all text-white px-10 py-4 rounded-xl text-lg font-semibold shadow-xl disabled:opacity-50"
+              className="w-full mb-8 bg-brand hover:bg-orange-600 transition-all text-white px-6 py-3 rounded-xl text-lg font-semibold shadow-xl disabled:opacity-50"
             >
               ➕ Connect New Gmail Account
             </button>
