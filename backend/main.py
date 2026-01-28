@@ -43,9 +43,15 @@ FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 app = FastAPI()
 
 # ================== SESSION ==================
+# Detect if we're on production (HTTPS) or local (HTTP)
+is_production = os.getenv("BACKEND_URL", "").startswith("https")
+
 app.add_middleware(
     SessionMiddleware,
     secret_key=os.getenv("SESSION_SECRET"),
+    session_cookie="oauth_session",
+    same_site="none" if is_production else "lax",
+    https_only=is_production,
 )
 
 # ================== CORS ==================
