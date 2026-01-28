@@ -53,7 +53,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
 
       if (!res.ok) {
-        throw new Error("Auth request failed");
+        throw new Error("Auth check failed");
       }
 
       const data = await res.json();
@@ -85,12 +85,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   useEffect(() => {
-    // Initial check
+    // Initial auth check
     checkAuth();
 
-    // OAuth redirect race-condition handling
+    // Handle OAuth redirect race condition
     const timers = Array.from({ length: 4 }).map((_, i) =>
-      setTimeout(checkAuth, (i + 1) * 1200)
+      setTimeout(checkAuth, (i + 1) * 1500)
     );
 
     return () => timers.forEach(clearTimeout);
