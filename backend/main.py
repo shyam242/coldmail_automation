@@ -28,6 +28,7 @@ from db import (
     get_gmail_account,
     count_gmail_accounts,
     delete_gmail_account,
+    update_gmail_account_name,
     update_user_gmail_tokens,
     get_user_gmail_tokens,
 )
@@ -358,6 +359,7 @@ async def gmail_connect_callback(request: Request):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+
 @app.delete("/gmail/accounts/{account_id}")
 def delete_account(account_id: int, request: Request):
     """Delete a Gmail account"""
@@ -368,3 +370,25 @@ def delete_account(account_id: int, request: Request):
 
     delete_gmail_account(account_id, user["id"])
     return {"success": True}
+
+
+@app.put("/gmail/accounts/{account_id}")
+async def update_account(account_id: int, request: Request):
+    """Update Gmail account details (like sender name)"""
+    session_id = request.cookies.get("session_id")
+    user = get_session(session_id) if session_id else None
+    if not user:
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+    try:
+        body = await request.json()
+        name = body.get("name", "").strip()
+        
+        if not name:
+            return JSONResponse({"error": "Name cannot be empty"}, status_code=400)
+        
+        update_gmail_account_name(account_id, user["id"], name)
+        return {"success": True, "message": "Account updated successfully"}
+    except Exception as e:
+        print(f"❌ Error updating Gmail account: {str(e)}")
+        return JSONResponse({"error": str(e)}, status_code=500)
