@@ -22,6 +22,8 @@ export default function SendersPage() {
   const router = useRouter();
   const [accounts, setAccounts] = useState<GmailAccount[]>([]);
   const [loading, setLoading] = useState(true);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editingName, setEditingName] = useState("");
 
   useEffect(() => {
     fetchAccounts();
@@ -102,6 +104,50 @@ export default function SendersPage() {
     }
   };
 
+  const handleEditName = (id: number, currentName: string) => {
+    setEditingId(id);
+    setEditingName(currentName);
+  };
+
+  const handleSaveName = async (id: number) => {
+    if (!editingName.trim()) {
+      showToast("Sender name cannot be empty", "error");
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API}/gmail/accounts/${id}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        credentials: "include",
+        body: JSON.stringify({ name: editingName.trim() }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to update sender name");
+      }
+
+      setAccounts((prev) =>
+        prev.map((acc) =>
+          acc.id === id ? { ...acc, name: editingName.trim() } : acc
+        )
+      );
+      setEditingId(null);
+      setEditingName("");
+      showToast("Sender name updated", "success");
+    } catch (error) {
+      console.error("Error updating sender name:", error);
+      showToast("Failed to update sender name", "error");
+    }
+  };
+
+  const handleCancelEdit = () => {
+    setEditingId(null);
+    setEditingName("");
+  };
+
   const handleContinue = () => {
     const selected = accounts.filter((acc) => acc.selected);
 
@@ -164,7 +210,42 @@ export default function SendersPage() {
                       />
                       <div className="ml-4 flex-1">
                         <p className="font-medium text-gray-900">{account.email}</p>
-                        <p className="text-sm text-gray-500">{account.name}</p>
+                        {editingId === account.id ? (
+                          <div className="flex items-center gap-2 mt-2">
+                            <input
+                              type="text"
+                              value={editingName}
+                              onChange={(e) => setEditingName(e.target.value)}
+                              placeholder="Enter sender name"
+                              className="flex-1 px-3 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              autoFocus
+                            />
+                            <button
+                              onClick={() => handleSaveName(account.id)}
+                              className="px-3 py-1 text-sm bg-green-600 text-white rounded hover:bg-green-700"
+                            >
+                              Save
+                            </button>
+                            <button
+                              onClick={handleCancelEdit}
+                              className="px-3 py-1 text-sm bg-gray-300 text-gray-700 rounded hover:bg-gray-400"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-between mt-1">
+                            <p className="text-sm text-gray-600">
+                              Sender name: <span className="font-medium text-gray-900">{account.name}</span>
+                            </p>
+                            <button
+                              onClick={() => handleEditName(account.id, account.name)}
+                              className="text-xs text-blue-600 hover:text-blue-700 hover:underline ml-2"
+                            >
+                              Edit
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </div>
                     <button
@@ -183,7 +264,7 @@ export default function SendersPage() {
           {accounts.length < 3 && (
             <button
               onClick={handleConnectGmail}
-              className="w-full mb-8 bg-brand hover:bg-orange-600 transition-all text-white px-6 py-3 rounded-xl text-lg font-semibold shadow-xl disabled:opacity-50"
+              className="w-full mb-8 bg-blue-600 hover:bg-blue-700 transition-all text-white px-6 py-3 rounded-lg font-semibold"
             >
               ➕ Connect New Gmail Account
             </button>
