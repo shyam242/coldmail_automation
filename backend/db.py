@@ -257,6 +257,14 @@ def delete_gmail_account(account_id, user_id):
     cur.execute("DELETE FROM gmail_accounts WHERE id=? AND user_id=?", (account_id, user_id))
     conn.commit()
 
+def update_gmail_account_name(account_id, user_id, name):
+    """Update the name/display name for a Gmail account"""
+    cur.execute("""
+        UPDATE gmail_accounts SET name=?
+        WHERE id=? AND user_id=?
+    """, (name, account_id, user_id))
+    conn.commit()
+
 def update_user_gmail_tokens(user_id, access_token, refresh_token):
     """Update tokens for the main user account (encrypted)"""
     # Encrypt tokens before storing
