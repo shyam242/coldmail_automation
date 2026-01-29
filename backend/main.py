@@ -253,9 +253,9 @@ async def send_emails(request: Request):
         for account_id in sender_account_ids:
             account = get_gmail_account(account_id, user["id"])
             if account:
-                # Extract only the needed fields: (id, email, access_token, refresh_token)
+                # Extract the needed fields: (id, email, name, access_token, refresh_token)
                 account_id, gmail_id, email, name, access_token, refresh_token = account
-                sender_accounts.append((account_id, email, access_token, refresh_token))
+                sender_accounts.append((account_id, email, name, access_token, refresh_token))
 
         if not sender_accounts:
             return JSONResponse({"error": "Invalid sender accounts"}, status_code=400)
