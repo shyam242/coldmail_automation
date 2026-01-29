@@ -25,7 +25,7 @@ def refresh_access_token(refresh_token):
         raise
 
 
-def send_email_via_gmail(access_token, recipient_email, subject, body, sender_email, delay=1):
+def send_email_via_gmail(access_token, recipient_email, subject, body, sender_email, sender_name, delay=1):
     """Send a single email via Gmail API"""
     try:
         creds = Credentials(token=access_token)
@@ -33,7 +33,11 @@ def send_email_via_gmail(access_token, recipient_email, subject, body, sender_em
 
         message = MIMEText(body)
         message["to"] = recipient_email
-        message["from"] = sender_email
+        # Format sender with name if available
+        if sender_name:
+            message["from"] = f"{sender_name} <{sender_email}>"
+        else:
+            message["from"] = sender_email
         message["subject"] = subject
 
         raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode()
@@ -73,7 +77,7 @@ def send_batch_via_gmail(sender_accounts, rows, subject, body, delay=1):
         if row_index > 0 and row_index % emails_per_account == 0:
             account_index = (account_index + 1) % len(sender_accounts)
 
-        account_id, sender_email, access_token, refresh_token = sender_accounts[account_index]
+        account_id, sender_email, sender_name, access_token, refresh_token = sender_accounts[account_index]
 
         # Try to send email
         try:
@@ -86,6 +90,7 @@ def send_batch_via_gmail(sender_accounts, rows, subject, body, delay=1):
                 personalized_subject,
                 personalized_body,
                 sender_email,
+                sender_name,
                 delay
             )
             
@@ -101,6 +106,7 @@ def send_batch_via_gmail(sender_accounts, rows, subject, body, delay=1):
                         personalized_subject,
                         personalized_body,
                         sender_email,
+                        sender_name,
                         delay
                     )
                     if success:
