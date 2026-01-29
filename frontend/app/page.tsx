@@ -69,12 +69,6 @@ export default function HomePage() {
             </p>
           </div>
         </div>
-
-        {/* FOOTER NOTE */}
-        <p className="text-sm text-gray-400 mt-12">
-          Built for founders, recruiters, and sales teams who care about
-          deliverability.
-        </p>
       </div>
     </main>
   );
