@@ -199,16 +199,16 @@ export default function SendersPage() {
                 {accounts.map((account) => (
                   <div
                     key={account.id}
-                    className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border border-gray-200"
+                    className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border border-gray-200 gap-4"
                   >
-                    <div className="flex items-center flex-1">
+                    <div className="flex items-center gap-3">
                       <input
                         type="checkbox"
                         checked={account.selected || false}
                         onChange={() => handleToggleSelect(account.id)}
-                        className="w-5 h-5 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
+                        className="w-5 h-5 text-blue-600 rounded focus:ring-2 focus:ring-blue-500 flex-shrink-0"
                       />
-                      <div className="ml-4 flex-1">
+                      <div className="flex-1">
                         <p className="font-medium text-gray-900">{account.email}</p>
                         {editingId === account.id ? (
                           <div className="flex items-center gap-2 mt-2">
@@ -217,30 +217,30 @@ export default function SendersPage() {
                               value={editingName}
                               onChange={(e) => setEditingName(e.target.value)}
                               placeholder="Enter sender name"
-                              className="flex-1 px-3 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              className="px-3 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                               autoFocus
                             />
                             <button
                               onClick={() => handleSaveName(account.id)}
-                              className="px-3 py-1 text-sm bg-green-600 text-white rounded hover:bg-green-700"
+                              className="px-2 py-1 text-sm bg-green-600 text-white rounded hover:bg-green-700 whitespace-nowrap"
                             >
                               Save
                             </button>
                             <button
                               onClick={handleCancelEdit}
-                              className="px-3 py-1 text-sm bg-gray-300 text-gray-700 rounded hover:bg-gray-400"
+                              className="px-2 py-1 text-sm bg-gray-300 text-gray-700 rounded hover:bg-gray-400 whitespace-nowrap"
                             >
                               Cancel
                             </button>
                           </div>
                         ) : (
-                          <div className="flex items-center justify-between mt-1">
+                          <div className="flex items-center gap-2 mt-1">
                             <p className="text-sm text-gray-600">
                               Sender name: <span className="font-medium text-gray-900">{account.name}</span>
                             </p>
                             <button
                               onClick={() => handleEditName(account.id, account.name)}
-                              className="text-xs text-blue-600 hover:text-blue-700 hover:underline ml-2"
+                              className="text-xs text-blue-600 hover:text-blue-700 hover:underline whitespace-nowrap"
                             >
                               Edit
                             </button>
@@ -250,7 +250,7 @@ export default function SendersPage() {
                     </div>
                     <button
                       onClick={() => handleDeleteAccount(account.id)}
-                      className="ml-4 px-3 py-1 text-sm text-red-600 hover:bg-red-50 rounded"
+                      className="px-3 py-1 text-sm text-red-600 hover:bg-red-50 rounded whitespace-nowrap flex-shrink-0"
                     >
                       Remove
                     </button>
