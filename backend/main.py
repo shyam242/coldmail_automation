@@ -1,4 +1,6 @@
 import os
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
 
 # Load env first
@@ -6,6 +8,7 @@ load_dotenv()
 
 from fastapi import FastAPI, Request, UploadFile
 from fastapi.responses import RedirectResponse, JSONResponse, HTMLResponse
+from starlette.requests import Request as StarletteRequest
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -42,6 +45,9 @@ assert os.getenv("SESSION_SECRET")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
 app = FastAPI()
+
+# Create thread pool executor for background tasks
+executor = ThreadPoolExecutor(max_workers=10)
 
 # ================== SESSION ==================
 # Detect if we're on production (HTTPS) or local (HTTP)
@@ -225,6 +231,7 @@ def delete_csv_api(csv_id: int, request: Request):
 
 @app.post("/send-emails")
 async def send_emails(request: Request):
+    """Send emails asynchronously to support large batches (up to 200+)"""
     session_id = request.cookies.get("session_id")
     user = get_session(session_id) if session_id else None
     if not user:
@@ -260,8 +267,16 @@ async def send_emails(request: Request):
         if not sender_accounts:
             return JSONResponse({"error": "Invalid sender accounts"}, status_code=400)
 
-        # Send emails via Gmail API
-        sent = send_batch_via_gmail(sender_accounts, rows, template["subject"], template["body"], delay=1)
+        # Run email sending in background thread to avoid timeout
+        loop = asyncio.get_event_loop()
+        sent = await loop.run_in_executor(
+            executor,
+            send_batch_via_gmail,
+            sender_accounts,
+            rows,
+            template["subject"],
+            template["body"]
+        )
 
         # Log emails sent
         for r in rows[:sent]:
@@ -271,6 +286,8 @@ async def send_emails(request: Request):
 
     except Exception as e:
         print(f"❌ Send emails error: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
