@@ -125,6 +125,10 @@ export default function PreviewPage() {
       setProgressMessage("Sending emails via Gmail API...");
 
       // Send emails using Gmail API with selected sender account IDs
+      // Increased timeout to 5 minutes (300000ms) to handle large batches
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 300000);
+
       const sendRes = await fetch(`${API}/send-emails`, {
         method: "POST",
         credentials: "include",
@@ -134,7 +138,10 @@ export default function PreviewPage() {
           senderAccountIds: senders, // Array of Gmail account IDs
           template,
         }),
+        signal: controller.signal,
       });
+
+      clearTimeout(timeoutId);
 
       if (!sendRes.ok) {
         const error = await sendRes.json();
