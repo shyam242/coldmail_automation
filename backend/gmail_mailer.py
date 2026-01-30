@@ -1,6 +1,8 @@
 import os
 import base64
 import time
+import asyncio
+import threading
 from email.mime.text import MIMEText
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
@@ -59,31 +61,31 @@ def send_email_via_gmail(access_token, recipient_email, subject, body, sender_em
         return False
 
 
-def send_batch_via_gmail(sender_accounts, rows, subject, body, delay=1):
+def send_batch_via_gmail(sender_accounts, rows, subject, body, delay=0.5):
     """
-    Send emails in batches (max 50 per account)
+    Send emails in batches (max 200+ per account with optimized handling)
     sender_accounts: list of tuples (account_id, email, access_token, refresh_token)
     rows: list of recipient dicts
+    Uses threading for async batch processing to handle large batches efficiently
     """
-    total_sent = 0
+    total_sent = [0]  # Use list to track in thread-safe manner
+    lock = threading.Lock()
     account_index = 0
-    emails_per_account = 50
-
-    for row_index, row in enumerate(rows):
-        if not row.get("email"):
-            continue
-
-        # Rotate through accounts (50 per account)
-        if row_index > 0 and row_index % emails_per_account == 0:
-            account_index = (account_index + 1) % len(sender_accounts)
-
-        account_id, sender_email, sender_name, access_token, refresh_token = sender_accounts[account_index]
-
-        # Try to send email
+    emails_per_account = 200  # Increased from 50 to 200
+    max_concurrent_per_account = 8  # Send up to 8 emails concurrently per account
+    
+    def send_email_worker(row, account_info):
+        """Worker function for threading"""
         try:
+            account_id, sender_email, sender_name, access_token, refresh_token = account_info
+            
+            if not row.get("email"):
+                return False
+            
             personalized_subject = subject.format(**row)
             personalized_body = body.format(**row)
             
+            # Try sending with current token
             success = send_email_via_gmail(
                 access_token,
                 row["email"],
@@ -91,13 +93,13 @@ def send_batch_via_gmail(sender_accounts, rows, subject, body, delay=1):
                 personalized_body,
                 sender_email,
                 sender_name,
-                delay
+                delay=0  # No delay needed with threading
             )
             
             if success:
-                total_sent += 1
+                return True
             else:
-                # Try to refresh token and retry
+                # Try refreshing token
                 try:
                     new_token = refresh_access_token(refresh_token)
                     success = send_email_via_gmail(
@@ -107,16 +109,55 @@ def send_batch_via_gmail(sender_accounts, rows, subject, body, delay=1):
                         personalized_body,
                         sender_email,
                         sender_name,
-                        delay
+                        delay=0
                     )
-                    if success:
-                        total_sent += 1
+                    return success
                 except Exception as e:
-                    print(f"⚠️ Failed to send to {row.get('email')}: {str(e)}")
-                    continue
-
+                    print(f"⚠️ Token refresh failed for {sender_email}: {str(e)}")
+                    return False
         except Exception as e:
-            print(f"⚠️ Error processing row for {row.get('email')}: {str(e)}")
+            print(f"⚠️ Worker error: {str(e)}")
+            return False
+    
+    # Process emails in batches using account rotation
+    active_threads = []
+    thread_results = []
+    
+    for row_index, row in enumerate(rows):
+        if not row.get("email"):
             continue
-
-    return total_sent
+        
+        # Rotate through accounts
+        account_index = (row_index // max_concurrent_per_account) % len(sender_accounts)
+        account_info = sender_accounts[account_index]
+        
+        # Wait for some threads to complete if we have too many
+        if len(active_threads) >= max_concurrent_per_account * len(sender_accounts):
+            # Wait for at least one thread to complete
+            for i, (thread, result_list) in enumerate(active_threads[:]):
+                thread.join(timeout=3)
+                if not thread.is_alive():
+                    # Count result if available
+                    if result_list and result_list[0]:
+                        with lock:
+                            total_sent[0] += 1
+                    active_threads.pop(i)
+                    break
+        
+        # Create and start thread
+        result_list = []
+        thread = threading.Thread(
+            target=lambda r=row, a=account_info, res=result_list: res.append(send_email_worker(r, a)),
+            daemon=True
+        )
+        thread.start()
+        active_threads.append((thread, result_list))
+    
+    # Wait for all threads to complete
+    for thread, result_list in active_threads:
+        thread.join(timeout=5)
+        if result_list and result_list[0]:
+            with lock:
+                total_sent[0] += 1
+    
+    return total_sent[0]
