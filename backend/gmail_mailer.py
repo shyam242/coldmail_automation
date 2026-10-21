@@ -3,11 +3,17 @@ import base64
 import time
 import asyncio
 import threading
+import uuid
+import re
+import html as html_lib
+from datetime import datetime, timezone
 from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+from db import log_tracked_email, update_gmail_tokens, get_gmail_account_by_id, get_user_email
 
 
 def refresh_access_token(refresh_token):
@@ -27,13 +33,40 @@ def refresh_access_token(refresh_token):
         raise
 
 
-def send_email_via_gmail(access_token, recipient_email, subject, body, sender_email, sender_name, delay=1):
+
+def _backend_url():
+    return os.getenv("BACKEND_URL", "http://localhost:8000").rstrip("/")
+
+
+def text_to_html(text):
+    """Turn a plain-text template body into simple HTML (keeps line breaks, links clickable)"""
+    escaped = html_lib.escape(text)
+    escaped = re.sub(r"(https?://[^\s<]+)", r'<a href="\1">\1</a>', escaped)
+    escaped = escaped.replace("\r\n", "\n").replace("\n", "<br>\n")
+    return f'<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5">{escaped}</div>'
+
+
+def build_tracked_html(text, tracking_id):
+    pixel = (
+        f'<img src="{_backend_url()}/t/{tracking_id}.gif" width="1" height="1" '
+        f'alt="" style="border:0;width:1px;height:1px" />'
+    )
+    return text_to_html(text) + pixel
+
+
+def send_email_via_gmail(access_token, recipient_email, subject, body, sender_email, sender_name, delay=1, html_body=None):
     """Send a single email via Gmail API"""
     try:
         creds = Credentials(token=access_token)
         service = build("gmail", "v1", credentials=creds)
 
-        message = MIMEText(body)
+        if html_body:
+            # Plain text + HTML alternative (HTML part carries the tracking pixel)
+            message = MIMEMultipart("alternative")
+            message.attach(MIMEText(body, "plain", "utf-8"))
+            message.attach(MIMEText(html_body, "html", "utf-8"))
+        else:
+            message = MIMEText(body)
         message["to"] = recipient_email
         # Format sender with name if available
         if sender_name:
@@ -61,7 +94,7 @@ def send_email_via_gmail(access_token, recipient_email, subject, body, sender_em
         return False
 
 
-def send_batch_via_gmail(sender_accounts, rows, subject, body, delay=0.5):
+def send_batch_via_gmail(sender_accounts, rows, subject, body, delay=0.5, user_id=None, track_opens=True):
     """
     Send emails in batches (max 200+ per account with optimized handling)
     sender_accounts: list of tuples (account_id, email, access_token, refresh_token)
@@ -84,37 +117,44 @@ def send_batch_via_gmail(sender_accounts, rows, subject, body, delay=0.5):
             
             personalized_subject = subject.format(**row)
             personalized_body = body.format(**row)
-            
-            # Try sending with current token
-            success = send_email_via_gmail(
-                access_token,
-                row["email"],
-                personalized_subject,
-                personalized_body,
-                sender_email,
-                sender_name,
-                delay=0  # No delay needed with threading
-            )
-            
-            if success:
-                return True
-            else:
+
+            # Unique id per email; the tracking pixel in the HTML part points to it
+            tracking_id = uuid.uuid4().hex
+            html_body = build_tracked_html(personalized_body, tracking_id) if track_opens else None
+
+            def _send(token):
+                return send_email_via_gmail(
+                    token,
+                    row["email"],
+                    personalized_subject,
+                    personalized_body,
+                    sender_email,
+                    sender_name,
+                    delay=0,  # No delay needed with threading
+                    html_body=html_body,
+                )
+
+            success = _send(access_token)
+
+            if not success:
                 # Try refreshing token
                 try:
                     new_token = refresh_access_token(refresh_token)
-                    success = send_email_via_gmail(
-                        new_token,
-                        row["email"],
-                        personalized_subject,
-                        personalized_body,
-                        sender_email,
-                        sender_name,
-                        delay=0
-                    )
-                    return success
+                    try:
+                        update_gmail_tokens(account_id, new_token)
+                    except Exception:
+                        pass
+                    success = _send(new_token)
                 except Exception as e:
                     print(f"⚠️ Token refresh failed for {sender_email}: {str(e)}")
                     return False
+
+            if success and user_id is not None:
+                log_tracked_email(
+                    user_id, row["email"], personalized_subject,
+                    tracking_id, account_id, sender_email, track_opens,
+                )
+            return success
         except Exception as e:
             print(f"⚠️ Worker error: {str(e)}")
             return False
@@ -161,3 +201,65 @@ def send_batch_via_gmail(sender_accounts, rows, subject, body, delay=0.5):
                 total_sent[0] += 1
     
     return total_sent[0]
+
+
+def notify_email_opened(info):
+    """
+    Email the account owner that a recipient opened a message.
+    Sent through the same Gmail account that sent the original email.
+    `info` comes from db.record_open().
+    """
+    try:
+        account = get_gmail_account_by_id(info["sender_account_id"])
+        owner_email = get_user_email(info["user_id"])
+        if not account or not owner_email:
+            return False
+
+        _, _, sender_email, sender_name, access_token, refresh_token = account
+
+        # Opens usually happen long after sending, so the stored access token
+        # is almost always expired -> refresh first when we can.
+        token = access_token
+        if refresh_token:
+            try:
+                token = refresh_access_token(refresh_token)
+                update_gmail_tokens(info["sender_account_id"], token)
+            except Exception:
+                pass
+
+        opened_at = datetime.now(timezone.utc).strftime("%d %b %Y, %H:%M UTC")
+        recipient = info["recipient"]
+        subject = info["subject"]
+
+        text = (
+            f"{recipient} just opened your email.\n\n"
+            f"Subject: {subject}\n"
+            f"Opened: {opened_at}\n"
+            f"Sent from: {sender_email}\n\n"
+            "Note: open tracking is approximate (some mail apps pre-load images)."
+        )
+        html_msg = (
+            '<div style="font-family:Arial,sans-serif;font-size:14px">'
+            f"<p>👀 <b>{html_lib.escape(recipient)}</b> just opened your email.</p>"
+            f"<p><b>Subject:</b> {html_lib.escape(subject)}<br>"
+            f"<b>Opened:</b> {opened_at}<br>"
+            f"<b>Sent from:</b> {html_lib.escape(sender_email)}</p>"
+            '<p style="color:#888;font-size:12px">Open tracking is approximate '
+            "(some mail apps pre-load images).</p></div>"
+        )
+
+        message = MIMEMultipart("alternative")
+        message.attach(MIMEText(text, "plain", "utf-8"))
+        message.attach(MIMEText(html_msg, "html", "utf-8"))
+        message["to"] = owner_email
+        message["from"] = f"{sender_name} <{sender_email}>" if sender_name else sender_email
+        message["subject"] = f"👀 {recipient} opened: {subject}"
+
+        raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
+        service = build("gmail", "v1", credentials=Credentials(token=token), cache_discovery=False)
+        service.users().messages().send(userId="me", body={"raw": raw}).execute()
+        return True
+    except Exception as e:
+        print(f"❌ Open notification failed: {str(e)}")
+        return False
+        
