@@ -7,8 +7,24 @@ import { useEffect, useState } from "react";
 
 const API = process.env.NEXT_PUBLIC_API_URL;
 
+type RecentEmail = {
+  recipient: string;
+  subject: string;
+  sentAt: string;
+  openCount: number;
+  firstOpenedAt: string | null;
+  lastOpenedAt: string | null;
+  tracked: boolean;
+};
+
+// SQLite returns UTC timestamps without a timezone suffix
+const toDate = (v: string) => new Date(v.includes("T") ? v : v.replace(" ", "T") + "Z");
+
 type DashboardStats = {
   totalEmailsSent: number;
+  totalOpened: number;
+  openRate: number;
+  recentEmails: RecentEmail[];
   totalCsvsUploaded: number;
   csvs: Array<{
     id: string;
@@ -22,6 +38,9 @@ export default function DashboardPage() {
   const { authenticated, user } = useAuth();
   const [stats, setStats] = useState<DashboardStats>({
     totalEmailsSent: 0,
+    totalOpened: 0,
+    openRate: 0,
+    recentEmails: [],
     totalCsvsUploaded: 0,
     csvs: [],
   });
@@ -45,6 +64,8 @@ export default function DashboardPage() {
     };
 
     fetchStats();
+    const interval = setInterval(fetchStats, 30000); // pick up new opens
+    return () => clearInterval(interval);
   }, [authenticated]);
 
   const handleDownloadCSV = async (csvId: string, filename: string) => {
@@ -110,11 +131,25 @@ export default function DashboardPage() {
           </div>
 
           {/* Stats */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-12">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-12">
             <div className="bg-gradient-to-br from-brand to-orange-600 text-white rounded-lg p-8 shadow-lg">
               <p className="text-sm opacity-90">Total Emails Sent</p>
               <p className="text-5xl font-bold mt-2">
                 {loading ? "..." : stats.totalEmailsSent}
+              </p>
+            </div>
+
+            <div className="bg-gradient-to-br from-green-500 to-green-600 text-white rounded-lg p-8 shadow-lg">
+              <p className="text-sm opacity-90">Emails Opened</p>
+              <p className="text-5xl font-bold mt-2">
+                {loading ? "..." : stats.totalOpened}
+              </p>
+            </div>
+
+            <div className="bg-gradient-to-br from-purple-500 to-purple-600 text-white rounded-lg p-8 shadow-lg">
+              <p className="text-sm opacity-90">Open Rate</p>
+              <p className="text-5xl font-bold mt-2">
+                {loading ? "..." : `${stats.openRate}%`}
               </p>
             </div>
 
@@ -124,6 +159,61 @@ export default function DashboardPage() {
                 {loading ? "..." : stats.totalCsvsUploaded}
               </p>
             </div>
+          </div>
+
+          {/* Sent emails + open tracking */}
+          <div className="bg-white rounded-lg shadow-md overflow-hidden mb-12">
+            <div className="bg-gray-50 border-b px-6 py-4">
+              <h2 className="text-2xl font-bold">Sent Emails</h2>
+              <p className="text-sm text-gray-500">
+                Open tracking is approximate — some mail apps pre-load images.
+              </p>
+            </div>
+
+            {loading ? (
+              <div className="p-6 text-center text-gray-500">Loading...</div>
+            ) : stats.recentEmails.length === 0 ? (
+              <div className="p-6 text-center text-gray-500">No emails sent yet</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="bg-gray-50 border-b">
+                      <th className="px-6 py-3 text-left">Recipient</th>
+                      <th className="px-6 py-3 text-left">Subject</th>
+                      <th className="px-6 py-3 text-left">Sent</th>
+                      <th className="px-6 py-3 text-left">Status</th>
+                      <th className="px-6 py-3 text-left">Opens</th>
+                      <th className="px-6 py-3 text-left">Last opened</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {stats.recentEmails.map((e, i) => (
+                      <tr key={i} className={i % 2 ? "bg-gray-50" : ""}>
+                        <td className="px-6 py-4">{e.recipient}</td>
+                        <td className="px-6 py-4">{e.subject}</td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          {toDate(e.sentAt).toLocaleString()}
+                        </td>
+                        <td className="px-6 py-4">
+                          {!e.tracked ? (
+                            <span className="text-gray-400">Not tracked</span>
+                          ) : e.openCount > 0 ? (
+                            <span className="text-green-600 font-semibold">Opened</span>
+                          ) : (
+                            <span className="text-gray-500">Not opened</span>
+                          )}
+                        </td>
+                        <td className="px-6 py-4">{e.tracked ? e.openCount : "-"}</td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          {e.lastOpenedAt ? toDate(e.lastOpenedAt).toLocaleString() : "-"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
 
           {/* CSV Table */}
