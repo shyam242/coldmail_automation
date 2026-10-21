@@ -34,6 +34,23 @@ type DashboardStats = {
   }>;
 };
 
+const EMPTY_STATS: DashboardStats = {
+  totalEmailsSent: 0,
+  totalOpened: 0,
+  openRate: 0,
+  recentEmails: [],
+  totalCsvsUploaded: 0,
+  csvs: [],
+};
+
+// Never trust the API shape: missing fields (older backend) or error bodies fall back to defaults
+const normalizeStats = (data: Partial<DashboardStats> | null | undefined): DashboardStats => ({
+  ...EMPTY_STATS,
+  ...(data && typeof data === "object" ? data : {}),
+  recentEmails: Array.isArray(data?.recentEmails) ? data!.recentEmails : [],
+  csvs: Array.isArray(data?.csvs) ? data!.csvs : [],
+});
+
 export default function DashboardPage() {
   const { authenticated, user } = useAuth();
   const [stats, setStats] = useState<DashboardStats>({
@@ -54,8 +71,9 @@ export default function DashboardPage() {
         const res = await fetch(`${API}/dashboard/stats`, {
           credentials: "include",
         });
+        if (!res.ok) throw new Error(`Stats request failed (${res.status})`);
         const data = await res.json();
-        setStats(data);
+        setStats(normalizeStats(data));
       } catch (error) {
         console.error("Failed to fetch stats:", error);
       } finally {
@@ -108,7 +126,7 @@ export default function DashboardPage() {
           credentials: "include",
         });
         const data = await statsRes.json();
-        setStats(data);
+        setStats(normalizeStats(data));
       } else {
         alert("Failed to delete CSV");
       }
