@@ -1,6 +1,7 @@
 import sqlite3
 import json
 import uuid
+import threading
 from datetime import datetime, timedelta
 
 # Import crypto utilities with fallback
@@ -83,7 +84,28 @@ CREATE TABLE IF NOT EXISTS emails_sent (
 )
 """)
 
+# ===== OPEN TRACKING MIGRATIONS =====
+for _col in [
+    "tracking_id TEXT",
+    "sender_account_id INTEGER",
+    "sender_email TEXT",
+    "open_count INTEGER DEFAULT 0",
+    "first_opened_at TIMESTAMP",
+    "last_opened_at TIMESTAMP",
+    "notified_at TIMESTAMP",
+    "track_opens INTEGER DEFAULT 1",
+]:
+    try:
+        cur.execute(f"ALTER TABLE emails_sent ADD COLUMN {_col}")
+    except Exception:
+        pass  # Column already exists
+
+cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_emails_tracking ON emails_sent(tracking_id)")
+
 conn.commit()
+
+# One shared connection is used from worker threads, so serialise writes
+db_lock = threading.RLock()
 
 def get_or_create_user(google_id, email, name):
     cur.execute("SELECT id FROM users WHERE google_id=?", (google_id,))
@@ -289,3 +311,128 @@ def get_user_gmail_tokens(user_id):
             "refresh_token": decrypt_token(row[1]) if row[1] else None
         }
     return None
+
+
+
+# ===== EMAIL OPEN TRACKING =====
+
+def log_tracked_email(user_id, recipient_email, subject, tracking_id,
+                      sender_account_id, sender_email, track_opens=True):
+    """Record a successfully sent email together with its tracking id"""
+    with db_lock:
+        c = conn.cursor()
+        c.execute("""
+            INSERT INTO emails_sent
+                (user_id, recipient_email, subject, tracking_id,
+                 sender_account_id, sender_email, track_opens, open_count)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+        """, (user_id, recipient_email, subject, tracking_id,
+              sender_account_id, sender_email, 1 if track_opens else 0))
+        conn.commit()
+
+
+def record_open(tracking_id, min_seconds=10):
+    """
+    Register an open for a tracking id.
+    Returns the email row (dict) ONLY when this is the first counted open
+    (so the caller sends exactly one notification); otherwise None.
+    Opens that arrive within `min_seconds` of sending are ignored
+    (mail scanners / the sender's own Sent folder).
+    """
+    with db_lock:
+        c = conn.cursor()
+        c.execute("""
+            SELECT id, user_id, recipient_email, subject, sender_account_id,
+                   sender_email, notified_at,
+                   (julianday('now') - julianday(sent_at)) * 86400.0
+            FROM emails_sent WHERE tracking_id=? AND track_opens=1
+        """, (tracking_id,))
+        row = c.fetchone()
+        if not row:
+            return None
+
+        (row_id, user_id, recipient, subject, account_id,
+         sender_email, notified_at, age_seconds) = row
+
+        if age_seconds is not None and age_seconds < min_seconds:
+            return None
+
+        c.execute("""
+            UPDATE emails_sent
+            SET open_count = COALESCE(open_count, 0) + 1,
+                last_opened_at = CURRENT_TIMESTAMP,
+                first_opened_at = COALESCE(first_opened_at, CURRENT_TIMESTAMP)
+            WHERE id=?
+        """, (row_id,))
+
+        first_open = notified_at is None
+        if first_open:
+            c.execute("UPDATE emails_sent SET notified_at=CURRENT_TIMESTAMP WHERE id=? AND notified_at IS NULL",
+                      (row_id,))
+            first_open = c.rowcount == 1
+        conn.commit()
+
+        if not first_open:
+            return None
+
+        return {
+            "user_id": user_id,
+            "recipient": recipient,
+            "subject": subject,
+            "sender_account_id": account_id,
+            "sender_email": sender_email,
+        }
+
+
+def get_gmail_account_by_id(account_id):
+    """Get a Gmail account without a user check (internal use only, decrypted)"""
+    with db_lock:
+        c = conn.cursor()
+        c.execute("""
+            SELECT id, gmail_id, email, name, access_token, refresh_token
+            FROM gmail_accounts WHERE id=?
+        """, (account_id,))
+        row = c.fetchone()
+    if not row:
+        return None
+    id, gmail_id, email, name, access_token, refresh_token = row
+    return (
+        id, gmail_id, email, name,
+        decrypt_token(access_token),
+        decrypt_token(refresh_token) if refresh_token else None
+    )
+
+
+def get_user_email(user_id):
+    with db_lock:
+        c = conn.cursor()
+        c.execute("SELECT email FROM users WHERE id=?", (user_id,))
+        row = c.fetchone()
+    return row[0] if row else None
+
+
+def count_opened_emails(user_id):
+    """Number of emails opened at least once"""
+    with db_lock:
+        c = conn.cursor()
+        c.execute("SELECT COUNT(*) FROM emails_sent WHERE user_id=? AND open_count > 0", (user_id,))
+        return c.fetchone()[0]
+
+
+def count_tracked_emails(user_id):
+    with db_lock:
+        c = conn.cursor()
+        c.execute("SELECT COUNT(*) FROM emails_sent WHERE user_id=? AND track_opens=1", (user_id,))
+        return c.fetchone()[0]
+
+
+def get_recent_emails(user_id, limit=50):
+    with db_lock:
+        c = conn.cursor()
+        c.execute("""
+            SELECT recipient_email, subject, sent_at, COALESCE(open_count, 0),
+                   first_opened_at, last_opened_at, COALESCE(track_opens, 1)
+            FROM emails_sent WHERE user_id=?
+            ORDER BY sent_at DESC, id DESC LIMIT ?
+        """, (user_id, limit))
+        return c.fetchall()
