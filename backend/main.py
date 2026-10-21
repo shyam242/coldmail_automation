@@ -6,14 +6,14 @@ from dotenv import load_dotenv
 # Load env first
 load_dotenv()
 
-from fastapi import FastAPI, Request, UploadFile
-from fastapi.responses import RedirectResponse, JSONResponse, HTMLResponse
+from fastapi import FastAPI, Request, UploadFile, BackgroundTasks
+from fastapi.responses import RedirectResponse, JSONResponse, HTMLResponse, Response
 from starlette.requests import Request as StarletteRequest
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
 from auth import oauth_client
-from gmail_mailer import send_batch_via_gmail
+from gmail_mailer import send_batch_via_gmail, notify_email_opened
 from db import (
     get_or_create_user,
     save_csv,
@@ -34,6 +34,10 @@ from db import (
     update_gmail_account_name,
     update_user_gmail_tokens,
     get_user_gmail_tokens,
+    record_open,
+    count_opened_emails,
+    count_tracked_emails,
+    get_recent_emails,
 )
 
 # ================== ENV CHECK ==================
@@ -77,7 +81,9 @@ async def google_login(request: Request):
     google = oauth_client()
     backend_url = os.getenv("BACKEND_URL", "http://localhost:8000")
     redirect_uri = f"{backend_url}/auth/google/callback"
-    return await google.authorize_redirect(request, redirect_uri)
+    return await google.authorize_redirect(
+        request, redirect_uri, access_type="offline", prompt="consent"
+    )
 
 
 @app.get("/auth/google/callback")
@@ -113,10 +119,7 @@ async def google_callback(request: Request):
             </script>
           </body>
         </html>
-        """
     )
-
-    # 🔥 CRITICAL COOKIE FIX FOR VERCEL + RENDER
     response.set_cookie(
         key="session_id",
         value=session_id,
@@ -180,8 +183,26 @@ def dashboard_stats(request: Request):
 
     user_id = user["id"]
 
+    total_sent = count_total_emails_sent(user_id)
+    tracked = count_tracked_emails(user_id)
+    opened = count_opened_emails(user_id)
+
     return {
-        "totalEmailsSent": count_total_emails_sent(user_id),
+        "totalEmailsSent": total_sent,
+        "totalOpened": opened,
+        "openRate": round(opened / tracked * 100, 1) if tracked else 0,
+        "recentEmails": [
+            {
+                "recipient": r[0],
+                "subject": r[1],
+                "sentAt": r[2],
+                "openCount": r[3],
+                "firstOpenedAt": r[4],
+                "lastOpenedAt": r[5],
+                "tracked": bool(r[6]),
+            }
+            for r in get_recent_emails(user_id)
+        ],
         "totalCsvsUploaded": count_total_csvs(user_id),
         "csvs": [
             {
@@ -227,6 +248,32 @@ def delete_csv_api(csv_id: int, request: Request):
     return {"success": True}
 
 
+# ================== OPEN TRACKING ==================
+
+# 1x1 transparent GIF
+TRACKING_GIF = bytes.fromhex(
+    "47494638396101000100800000000000ffffff21f90401000000002c00000000010001000002024401003b"
+)
+MIN_SECONDS_BEFORE_OPEN = int(os.getenv("MIN_SECONDS_BEFORE_OPEN", "10"))
+
+
+@app.get("/t/{tracking_id}.gif")
+def track_open(tracking_id: str, background_tasks: BackgroundTasks):
+    """Public endpoint hit by the invisible image inside every sent email"""
+    try:
+        info = record_open(tracking_id, MIN_SECONDS_BEFORE_OPEN)
+        if info:  # first counted open -> notify the owner once
+            background_tasks.add_task(notify_email_opened, info)
+    except Exception as e:
+        print(f"❌ Tracking error: {str(e)}")
+
+    return Response(
+        content=TRACKING_GIF,
+        media_type="image/gif",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0", "Pragma": "no-cache"},
+    )
+
+
 # ================== SEND EMAILS ==================
 
 @app.post("/send-emails")
@@ -242,6 +289,7 @@ async def send_emails(request: Request):
         csv_id = body["csvId"]
         sender_account_ids = body["senderAccountIds"]  # List of Gmail account IDs to use
         template = body["template"]
+        track_opens = bool(body.get("trackOpens", True))
 
         if not sender_account_ids:
             return JSONResponse({"error": "No sender accounts selected"}, status_code=400)
@@ -275,12 +323,12 @@ async def send_emails(request: Request):
             sender_accounts,
             rows,
             template["subject"],
-            template["body"]
+            template["body"],
+            0.5,
+            user["id"],
+            track_opens,
         )
-
-        # Log emails sent
-        for r in rows[:sent]:
-            log_email_sent(user["id"], r.get("email", ""), template["subject"])
+        # Each successfully sent email is logged (with its tracking id) inside the sender
 
         return {"success": True, "emailsSent": sent}
 
@@ -331,7 +379,9 @@ async def connect_gmail_account(request: Request):
     google = oauth_client()
     backend_url = os.getenv("BACKEND_URL", "http://localhost:8000")
     redirect_uri = f"{backend_url}/gmail/connect/callback"
-    return await google.authorize_redirect(request, redirect_uri)
+    return await google.authorize_redirect(
+        request, redirect_uri, access_type="offline", prompt="consent"
+    )
 
 
 @app.get("/gmail/connect/callback")
@@ -367,7 +417,6 @@ async def gmail_connect_callback(request: Request):
                 </script>
               </body>
             </html>
-            """
         )
         return response
 
@@ -409,3 +458,4 @@ async def update_account(account_id: int, request: Request):
     except Exception as e:
         print(f"❌ Error updating Gmail account: {str(e)}")
         return JSONResponse({"error": str(e)}, status_code=500)
+    
