@@ -111,7 +111,6 @@ async def google_callback(request: Request):
     })
 
     response = HTMLResponse(
-        f"""
         <html>
           <body>
             <script>
