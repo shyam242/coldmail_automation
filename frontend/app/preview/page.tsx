@@ -38,6 +38,7 @@ export default function PreviewPage() {
   const [previewIndex, setPreviewIndex] = useState(0);
   const [preview, setPreview] = useState<{ subject: string; body: string } | null>(null);
 
+  const [trackOpens, setTrackOpens] = useState(true);
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [progressMessage, setProgressMessage] = useState("");
@@ -137,6 +138,7 @@ export default function PreviewPage() {
           csvId,
           senderAccountIds: senders, // Array of Gmail account IDs
           template,
+          trackOpens,
         }),
         signal: controller.signal,
       });
@@ -215,6 +217,23 @@ export default function PreviewPage() {
 
             {/* ACTION */}
             <div className="space-y-4">
+              <label className="flex items-start gap-3 bg-white p-4 rounded shadow cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={trackOpens}
+                  onChange={(e) => setTrackOpens(e.target.checked)}
+                  disabled={loading}
+                  className="mt-1"
+                />
+                <span>
+                  <span className="font-semibold block">Track opens</span>
+                  <span className="text-sm text-gray-500">
+                    Adds an invisible pixel and emails you the first time each
+                    recipient opens.
+                  </span>
+                </span>
+              </label>
+
               {!loading ? (
                 <button
                   onClick={handleSendEmails}
