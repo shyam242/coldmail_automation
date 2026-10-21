@@ -111,6 +111,7 @@ async def google_callback(request: Request):
     })
 
     response = HTMLResponse(
+        f"""
         <html>
           <body>
             <script>
@@ -118,7 +119,10 @@ async def google_callback(request: Request):
             </script>
           </body>
         </html>
+        """
     )
+
+    # 🔥 CRITICAL COOKIE FIX FOR VERCEL + RENDER
     response.set_cookie(
         key="session_id",
         value=session_id,
@@ -416,6 +420,7 @@ async def gmail_connect_callback(request: Request):
                 </script>
               </body>
             </html>
+            """
         )
         return response
 
@@ -457,4 +462,3 @@ async def update_account(account_id: int, request: Request):
     except Exception as e:
         print(f"❌ Error updating Gmail account: {str(e)}")
         return JSONResponse({"error": str(e)}, status_code=500)
-    
